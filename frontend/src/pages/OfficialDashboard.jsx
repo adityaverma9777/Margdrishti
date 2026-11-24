@@ -46,7 +46,7 @@ const INITIAL_VEHICLES = [
 ];
 
 export default function OfficialDashboard() {
-  const { currentUser, activeRegion } = useAuth();
+  const { currentUser } = useAuth();
   const [vehicles, setVehicles] = useState(INITIAL_VEHICLES);
   const [selectedVehicle, setSelectedVehicle] = useState(INITIAL_VEHICLES[0]);
   const [defects, setDefects] = useState([]);
@@ -118,17 +118,17 @@ export default function OfficialDashboard() {
   };
 
   return (
-    <div className="gov-container" style={{ padding: '24px 20px', minHeight: 'calc(100vh - 68px)' }}>
+    <div className="gov-container" style={{ padding: '24px 20px', minHeight: 'calc(100vh - 60px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '22px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--gov-navy)', letterSpacing: '-0.4px' }}>
-              Public Works Official Desk & Fleet Oversight
+              Official Desk & Fleet Oversight
             </h1>
-            <span className="gov-badge gov-badge-blue">Supervising Engineer Console</span>
+            <span className="gov-badge gov-badge-blue">Official</span>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-            Officer: <strong>{currentUser?.name || currentUser?.username || 'Executive Officer'}</strong> • Division: {activeRegion.city}, {activeRegion.state} • Connected to Live Supabase Database
+            Officer: <strong>{currentUser?.name || currentUser?.username || 'Executive Officer'}</strong>
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>

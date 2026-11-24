@@ -50,7 +50,7 @@ const SAMPLE_STRETCHES = [
 ];
 
 export default function SurveyorDashboard() {
-  const { currentUser, activeRegion } = useAuth();
+  const { currentUser } = useAuth();
   const [filterType, setFilterType] = useState('ALL');
   const [selectedStretch, setSelectedStretch] = useState(SAMPLE_STRETCHES[0]);
   const [activeTab, setActiveTab] = useState('stretches');
@@ -71,10 +71,10 @@ export default function SurveyorDashboard() {
             <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--gov-navy)', letterSpacing: '-0.4px' }}>
               Field Surveyor Console
             </h1>
-            <span className="gov-badge gov-badge-green">Vehicle Unit Active</span>
+            <span className="gov-badge gov-badge-green">Active</span>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-            Inspection Crew for Vehicle: <strong>{currentUser?.vehicleNumber || 'AS-01-BX-4021'}</strong> ({currentUser?.vehicleModel || 'Inspection Bolero #03'}) • Division: {activeRegion.city}, {activeRegion.state}
+            Vehicle: <strong>{currentUser?.vehicleNumber || 'AS-01-BX-4021'}</strong>
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
