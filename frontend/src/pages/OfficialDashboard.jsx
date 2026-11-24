@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Car, Plus, Send, RefreshCw, Printer, ShieldCheck, AlertCircle, History, MessageSquare, Check, X, MapPin, Globe, Route, PenTool } from 'lucide-react';
+import { Car, Plus, Send, RefreshCw, Printer, ShieldCheck, AlertCircle, History, MessageSquare, Check, X, MapPin, Globe, Route, PenTool, Compass, Eye, Search } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
   fetchFleetVehicles,
@@ -11,11 +11,13 @@ import {
   fetchDefectsLedger,
   submitDefectAction,
   fetchDefectAuditTrail,
-  fetchOfficialSummary
+  fetchOfficialSummary,
+  fetchSurveyTrips
 } from '../services/officialApi';
 import FleetOverviewMap from '../components/FleetOverviewMap';
 import StretchPlannerMap from '../components/StretchPlannerMap';
 import VehicleTaskStretchMap from '../components/VehicleTaskStretchMap';
+import SurveyTripDetailModal from '../components/SurveyTripDetailModal';
 import { STATE_COORDINATES } from '../utils/routingEngine';
 
 const STATE_OPTIONS = Object.keys(STATE_COORDINATES);
@@ -29,6 +31,10 @@ export default function OfficialDashboard() {
   const [vehicleTasks, setVehicleTasks] = useState([]);
   const [defects, setDefects] = useState([]);
   const [summary, setSummary] = useState(null);
+  const [trips, setTrips] = useState([]);
+  const [selectedTripForModal, setSelectedTripForModal] = useState(null);
+  const [tripFilter, setTripFilter] = useState('all');
+  const [tripSearch, setTripSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
   const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
@@ -56,15 +62,17 @@ export default function OfficialDashboard() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [vehList, defectList, sumData] = await Promise.all([
+    const [vehList, defectList, sumData, tripsList] = await Promise.all([
       fetchFleetVehicles(),
       fetchDefectsLedger(),
-      fetchOfficialSummary()
+      fetchOfficialSummary(),
+      fetchSurveyTrips()
     ]);
     const filteredVehicles = vehList.filter(v => !v.state || v.state === selectedState);
     setVehicles(filteredVehicles);
     setDefects(defectList);
     setSummary(sumData);
+    setTrips(tripsList);
     if (filteredVehicles.length > 0) {
       const active = selectedVehicle ? filteredVehicles.find(v => v.id === selectedVehicle.id) || filteredVehicles[0] : filteredVehicles[0];
       setSelectedVehicle(active);
@@ -251,6 +259,29 @@ export default function OfficialDashboard() {
             <RefreshCw size={14} />
             <span>Sync</span>
           </button>
+          <button className="gov-btn-secondary" onClick={loadData}>
+            <RefreshCw size={14} />
+            <span>Sync</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('surveys')}
+            style={{
+              padding: '8px 14px',
+              borderRadius: 'var(--radius-sm)',
+              background: activeTab === 'surveys' ? 'var(--gov-blue)' : 'var(--gov-navy)',
+              color: '#ffffff',
+              border: 'none',
+              fontWeight: 700,
+              fontSize: '13px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <Compass size={14} />
+            <span>Visit Surveys ({trips.length})</span>
+          </button>
           <button className="gov-btn-secondary" onClick={() => window.print()}>
             <Printer size={14} />
             <span>Print Report</span>
@@ -279,6 +310,18 @@ export default function OfficialDashboard() {
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
             Registered in {selectedState} fleet
+          </div>
+        </div>
+
+        <div className="gov-card" style={{ padding: '18px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
+            Network Survey Trips
+          </div>
+          <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-blue)', marginTop: '6px' }}>
+            {trips.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Trips</span>
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
+            {trips.filter(t => !t.is_demo).length} Field Patrols • {trips.filter(t => t.is_demo).length} Demo Scans
           </div>
         </div>
 
@@ -323,6 +366,21 @@ export default function OfficialDashboard() {
           }}
         >
           Fleet & Task Dispatch ({vehicles.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('surveys')}
+          style={{
+            padding: '10px 16px',
+            border: 'none',
+            borderBottom: activeTab === 'surveys' ? '3px solid var(--gov-blue)' : '3px solid transparent',
+            background: 'transparent',
+            fontWeight: 700,
+            fontSize: '13px',
+            color: activeTab === 'surveys' ? 'var(--gov-navy)' : 'var(--gov-text-muted)',
+            cursor: 'pointer'
+          }}
+        >
+          Visit Surveys ({trips.length})
         </button>
         <button
           onClick={() => setActiveTab('defects')}
@@ -880,6 +938,186 @@ export default function OfficialDashboard() {
         </div>
       )}
 
+      {activeTab === 'surveys' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div className="gov-card" style={{ padding: '16px 20px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                onClick={() => setTripFilter('all')}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  border: '1px solid var(--gov-border)',
+                  background: tripFilter === 'all' ? 'var(--gov-navy)' : '#ffffff',
+                  color: tripFilter === 'all' ? '#ffffff' : 'var(--gov-text-primary)',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                All Surveys ({trips.length})
+              </button>
+              <button
+                onClick={() => setTripFilter('real')}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  border: '1px solid var(--gov-border)',
+                  background: tripFilter === 'real' ? 'var(--gov-blue)' : '#ffffff',
+                  color: tripFilter === 'real' ? '#ffffff' : 'var(--gov-text-primary)',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Field Patrols ({trips.filter(t => !t.is_demo).length})
+              </button>
+              <button
+                onClick={() => setTripFilter('demo')}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  border: '1px solid var(--gov-border)',
+                  background: tripFilter === 'demo' ? '#d97706' : '#ffffff',
+                  color: tripFilter === 'demo' ? '#ffffff' : 'var(--gov-text-primary)',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Demo Scans ({trips.filter(t => t.is_demo).length})
+              </button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '260px' }}>
+              <div style={{ position: 'relative', width: '100%' }}>
+                <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--gov-text-muted)' }} />
+                <input
+                  type="text"
+                  placeholder="Search road name, vehicle, or driver..."
+                  className="gov-input"
+                  value={tripSearch}
+                  onChange={(e) => setTripSearch(e.target.value)}
+                  style={{ paddingLeft: '32px', fontSize: '12px', width: '100%' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {trips.filter(t => {
+            if (tripFilter === 'real' && t.is_demo) return false;
+            if (tripFilter === 'demo' && !t.is_demo) return false;
+            if (tripSearch) {
+              const q = tripSearch.toLowerCase();
+              const road = (t.road_name || '').toLowerCase();
+              const veh = (t.vehicle_number || '').toLowerCase();
+              const drv = (t.driver_name || '').toLowerCase();
+              if (!road.includes(q) && !veh.includes(q) && !drv.includes(q)) return false;
+            }
+            return true;
+          }).length === 0 ? (
+            <div className="gov-card" style={{ padding: '48px', textAlign: 'center', color: 'var(--gov-text-muted)' }}>
+              <Compass size={36} color="var(--gov-border)" style={{ margin: '0 auto 12px auto' }} />
+              <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--gov-navy)' }}>No Survey Trips Found</div>
+              <div style={{ fontSize: '13px', marginTop: '4px' }}>No recorded survey trips match the current filter or search criteria.</div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: '16px' }}>
+              {trips.filter(t => {
+                if (tripFilter === 'real' && t.is_demo) return false;
+                if (tripFilter === 'demo' && !t.is_demo) return false;
+                if (tripSearch) {
+                  const q = tripSearch.toLowerCase();
+                  const road = (t.road_name || '').toLowerCase();
+                  const veh = (t.vehicle_number || '').toLowerCase();
+                  const drv = (t.driver_name || '').toLowerCase();
+                  if (!road.includes(q) && !veh.includes(q) && !drv.includes(q)) return false;
+                }
+                return true;
+              }).map((trip) => {
+                const isCompleted = trip.status === 'completed';
+                const pci = trip.calculated_pci !== null && trip.calculated_pci !== undefined ? trip.calculated_pci : 100;
+                const pciColor = pci >= 80 ? '#16a34a' : pci >= 65 ? '#ca8a04' : '#dc2626';
+                const dateStr = trip.start_time || trip.created_at;
+                const formattedDate = dateStr ? new Date(dateStr).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A';
+                return (
+                  <div key={trip.id} className="gov-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '14px', border: '1px solid var(--gov-border)', borderRadius: 'var(--radius-sm)' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                        <div>
+                          <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                            {trip.road_name || 'Highway Survey Stretch'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)', marginTop: '2px' }}>
+                            {formattedDate}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                          <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', padding: '2px 8px', borderRadius: '10px', background: isCompleted ? '#dcfce7' : '#e0f2fe', color: isCompleted ? '#166534' : '#0369a1', border: `1px solid ${isCompleted ? '#bbf7d0' : '#bae6fd'}` }}>
+                            {isCompleted ? 'Completed' : 'In Progress'}
+                          </span>
+                          {trip.is_demo && (
+                            <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                              Demo Scan
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginTop: '14px', padding: '10px', background: 'var(--gov-card-subtle)', borderRadius: '6px', border: '1px solid var(--gov-border)' }}>
+                        <div>
+                          <div style={{ fontSize: '10px', color: 'var(--gov-text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Distance</div>
+                          <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--gov-navy)', marginTop: '2px' }}>
+                            {trip.total_distance_km ? `${trip.total_distance_km} KM` : '0.0 KM'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '10px', color: 'var(--gov-text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>PCI Score</div>
+                          <div style={{ fontSize: '13px', fontWeight: 800, color: pciColor, marginTop: '2px' }}>
+                            {pci}/100
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '10px', color: 'var(--gov-text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Avg Speed</div>
+                          <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--gov-navy)', marginTop: '2px' }}>
+                            {trip.avg_speed_kmh ? `${trip.avg_speed_kmh} km/h` : '—'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '10px' }}>
+                        Unit: <strong style={{ color: 'var(--gov-navy)' }}>{trip.vehicle_number || 'Inspection Unit'}</strong> • Driver: <strong style={{ color: 'var(--gov-navy)' }}>{trip.driver_name || 'Assigned Crew'}</strong>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setSelectedTripForModal(trip)}
+                      style={{
+                        padding: '8px 12px',
+                        background: 'var(--gov-navy)',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        transition: 'background 0.15s ease'
+                      }}
+                    >
+                      <Eye size={14} />
+                      <span>Inspect Trip, Route & Evidence</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {showAddVehicleModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
           <div className="gov-card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
@@ -1119,6 +1357,13 @@ export default function OfficialDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {selectedTripForModal && (
+        <SurveyTripDetailModal
+          trip={selectedTripForModal}
+          onClose={() => setSelectedTripForModal(null)}
+        />
       )}
     </div>
   );

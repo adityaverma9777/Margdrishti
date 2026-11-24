@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { X, Play, Pause, RotateCcw, Volume2, VolumeX, Activity, AlertTriangle } from 'lucide-react';
 import * as tf from '@tensorflow/tfjs';
+import { supabase } from '../supabaseClient';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
 import { runInference, parseYoloOutputAll } from '../utils/tfjsParser';
 const DEMO_VIDEOS = [
@@ -31,6 +32,85 @@ export default function ScanDemoModal({ onClose }) {
   const isInferringRef = useRef(false);
   const lastInferTimeRef = useRef(0);
   const stoppedRef = useRef(false);
+  const tripIdRef = useRef(`demo_${Date.now()}`);
+  const pciScoreRef = useRef(100);
+  const lastSnapshotTimesRef = useRef({});
+  const uploadDemoSnapshot = async (videoEl) => {
+    try {
+      const offscreen = document.createElement('canvas');
+      offscreen.width = 640;
+      offscreen.height = 360;
+      const octx = offscreen.getContext('2d');
+      octx.drawImage(videoEl, 0, 0, 640, 360);
+      const blob = await new Promise(resolve => offscreen.toBlob(resolve, 'image/jpeg', 0.65));
+      if (!blob) return null;
+      const fileName = `${tripIdRef.current}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+      const { error: uploadErr } = await supabase.storage
+        .from('demo-scans')
+        .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true });
+      if (uploadErr) return null;
+      const { data: pubData } = supabase.storage.from('demo-scans').getPublicUrl(fileName);
+      return pubData?.publicUrl || null;
+    } catch {
+      return null;
+    }
+  };
+  const handleDefectLogging = async (defectsList, videoEl) => {
+    if (!defectsList || defectsList.length === 0 || !videoEl) return;
+    const now = Date.now();
+    for (const d of defectsList) {
+      const label = d.display_label || d.displayLabel || d.className || 'Hazard';
+      const lastTime = lastSnapshotTimesRef.current[label] || 0;
+      if (now - lastTime < 6000) continue;
+      lastSnapshotTimesRef.current[label] = now;
+      const isPothole = label.toLowerCase().includes('pothole');
+      const photoUrl = await uploadDemoSnapshot(videoEl);
+      try {
+        await supabase.from('hazards').insert([{
+          trip_id: tripIdRef.current,
+          vehicle_number: 'DEMO-UNIT-01',
+          type: isPothole ? 'pothole' : 'crack',
+          display_label: label,
+          confidence: d.confidence ? Math.round(d.confidence * 100) : 85,
+          severity: d.severity || (isPothole ? 4 : 2),
+          image_url: photoUrl,
+          is_demo: true,
+          status: 'unverified',
+          action_status: 'pending_review',
+          location: 'POINT(91.7362 26.1445)'
+        }]);
+      } catch {}
+    }
+  };
+  useEffect(() => {
+    let mounted = true;
+    const initTrip = async () => {
+      try {
+        await supabase.from('survey_trips').insert([{
+          id: tripIdRef.current,
+          road_name: `Demo Footage Scan: ${selectedVideo.label}`,
+          driver_name: 'AI Simulation Agent',
+          vehicle_number: 'DEMO-UNIT-01',
+          start_time: new Date().toISOString(),
+          status: 'in_progress',
+          is_demo: true,
+          calculated_pci: 100
+        }]);
+      } catch {}
+    };
+    initTrip();
+    return () => {
+      mounted = false;
+      supabase.from('survey_trips').update({
+        end_time: new Date().toISOString(),
+        status: 'completed',
+        calculated_pci: pciScoreRef.current,
+        total_distance_km: 1.25,
+        avg_speed_kmh: 32,
+        max_speed_kmh: 45
+      }).eq('id', tripIdRef.current).then(() => {}).catch(() => {});
+    };
+  }, []);
   useEffect(() => {
     let active = true;
     const checkStatus = async () => {
@@ -263,13 +343,17 @@ export default function ScanDemoModal({ onClose }) {
                 lastDetectionsRef.current = hazs;
                 if (res.estimated_pci !== undefined) {
                   setPciScore(res.estimated_pci);
+                  pciScoreRef.current = res.estimated_pci;
                   setPciRating(res.pci_rating || 'Good');
                 }
                 setFcwActive(Boolean(res.fcw_alert));
                 setVehiclesCount((res.vehicles || []).length);
                 setHazardsCount(hazs.length);
                 if (res.fcw_audio) playAlertChime(880);
-                if (hazs.length > 0) playAlertChime(660);
+                if (hazs.length > 0) {
+                  playAlertChime(660);
+                  handleDefectLogging(hazs, video);
+                }
               }
             } else if (localModelRef.current) {
               const preds = runInference(localModelRef.current, video);
@@ -278,7 +362,10 @@ export default function ScanDemoModal({ onClose }) {
               else preds.dispose();
               lastDetectionsRef.current = currentDetections;
               setHazardsCount(currentDetections.length);
-              if (currentDetections.length > 0) playAlertChime(660);
+              if (currentDetections.length > 0) {
+                playAlertChime(660);
+                handleDefectLogging(currentDetections, video);
+              }
             }
           } catch {}
           isInferringRef.current = false;

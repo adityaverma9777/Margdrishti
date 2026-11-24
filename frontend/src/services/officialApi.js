@@ -168,6 +168,13 @@ export async function fetchDefectAuditTrail(defectId) {
   return data || [];
 }
 
+export async function fetchSurveyTrips(typeFilter = null) {
+  let query = supabase.from('survey_trips').select('*').order('created_at', { ascending: false });
+  if (typeFilter === 'real') query = query.eq('is_demo', false);
+  else if (typeFilter === 'demo') query = query.eq('is_demo', true);
+  const { data } = await query;
+  return data || [];
+}
 export async function fetchOfficialSummary() {
   const backendRes = await requestBackend('/reports/summary');
   if (backendRes) return backendRes;

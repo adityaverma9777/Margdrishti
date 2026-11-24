@@ -139,30 +139,33 @@ def run_tri_layer_detection(img: Image.Image, conf_threshold: float):
                 }
             })
     estimated_pci = max(0, min(100, 100 - deduct_points))
-    img_resized_640 = cv2.resize(img_np, (640, 640))
-    tensor_img = torch.from_numpy(img_resized_640).permute(2, 0, 1).unsqueeze(0).float().to(DEVICE) / 255.0
-    with torch.no_grad():
-        da_out, ll_out = twin_model(tensor_img)
-        da_mask = (torch.softmax(da_out, dim=1)[0, 1] > 0.38).cpu().numpy().astype(np.uint8)
-        ll_mask = (torch.softmax(ll_out, dim=1)[0, 1] > 0.30).cpu().numpy().astype(np.uint8)
+    img_mean = float(np.mean(img_np))
+    img_std = float(np.std(img_np))
     drivable_area_polygons = []
-    da_contours, _ = cv2.findContours(da_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for cnt in da_contours:
-        if cv2.contourArea(cnt) > 1800:
-            epsilon = 0.006 * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-            pts = [[round(p[0][0] / 640.0, 4), round(p[0][1] / 640.0, 4)] for p in approx]
-            if len(pts) >= 3:
-                drivable_area_polygons.append(pts)
     lane_line_polygons = []
-    ll_contours, _ = cv2.findContours(ll_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for cnt in ll_contours:
-        if cv2.contourArea(cnt) > 90:
-            epsilon = 0.004 * cv2.arcLength(cnt, False)
-            approx = cv2.approxPolyDP(cnt, epsilon, False)
-            pts = [[round(p[0][0] / 640.0, 4), round(p[0][1] / 640.0, 4)] for p in approx]
-            if len(pts) >= 2:
-                lane_line_polygons.append(pts)
+    if img_mean >= 25.0 and img_std >= 14.0:
+        img_resized_640 = cv2.resize(img_np, (640, 640))
+        tensor_img = torch.from_numpy(img_resized_640).permute(2, 0, 1).unsqueeze(0).float().to(DEVICE) / 255.0
+        with torch.no_grad():
+            da_out, ll_out = twin_model(tensor_img)
+            da_mask = (torch.softmax(da_out, dim=1)[0, 1] > 0.58).cpu().numpy().astype(np.uint8)
+            ll_mask = (torch.softmax(ll_out, dim=1)[0, 1] > 0.50).cpu().numpy().astype(np.uint8)
+        da_contours, _ = cv2.findContours(da_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in da_contours:
+            if cv2.contourArea(cnt) > 2200:
+                epsilon = 0.007 * cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, epsilon, True)
+                pts = [[round(p[0][0] / 640.0, 4), round(p[0][1] / 640.0, 4)] for p in approx]
+                if len(pts) >= 3:
+                    drivable_area_polygons.append(pts)
+        ll_contours, _ = cv2.findContours(ll_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in ll_contours:
+            if cv2.contourArea(cnt) > 120:
+                epsilon = 0.005 * cv2.arcLength(cnt, False)
+                approx = cv2.approxPolyDP(cnt, epsilon, False)
+                pts = [[round(p[0][0] / 640.0, 4), round(p[0][1] / 640.0, 4)] for p in approx]
+                if len(pts) >= 2:
+                    lane_line_polygons.append(pts)
     veh_results = veh_model.predict(
         img,
         imgsz=640,

@@ -28,6 +28,13 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const prevCoordsRef = useRef(null);
   const lastDetectionsRef = useRef([]);
   const lastTriLayerRef = useRef(null);
+  const tripIdRef = useRef(crypto.randomUUID());
+  const tripRoutePointsRef = useRef([]);
+  const speedTelemetryRef = useRef([]);
+  const maxSpeedRef = useRef(0);
+  const totalSpeedSumRef = useRef(0);
+  const speedReadingsCountRef = useRef(0);
+  const lastHazardSnapTimeRef = useRef({});
   const [localModel, setLocalModel] = useState(null);
   const [gpuServerOnline, setGpuServerOnline] = useState(false);
   const [engineReady, setEngineReady] = useState(false);
@@ -44,6 +51,27 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const [telemetryHistory, setTelemetryHistory] = useState([]);
   const [speedAlert, setSpeedAlert] = useState(false);
   const [fcwActive, setFcwActive] = useState(false);
+  useEffect(() => {
+    const initTripRecord = async () => {
+      try {
+        await supabase.from('survey_trips').insert([{
+          id: tripIdRef.current,
+          task_id: task?.id || null,
+          vehicle_id: task?.assigned_vehicle_id || null,
+          vehicle_number: task?.assigned_vehicle_number || task?.vehicle_number || null,
+          road_name: task?.road_name || task?.title || 'Drive & Random Scan',
+          driver_name: task?.driver_name || 'Assigned Surveyor',
+          start_time: new Date().toISOString(),
+          status: 'in_progress',
+          is_demo: false,
+          total_distance_km: 0,
+          calculated_pci: 100,
+          pci_category: 'Good'
+        }]);
+      } catch {}
+    };
+    initTripRecord();
+  }, [task?.id, task?.assigned_vehicle_id, task?.assigned_vehicle_number, task?.vehicle_number, task?.road_name, task?.title, task?.driver_name]);
   useEffect(() => {
     let active = true;
     const checkStatus = async () => {
@@ -140,9 +168,15 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             calculatedSpeedKmh = 0;
           }
           setCurrentSpeed(calculatedSpeedKmh);
+          if (calculatedSpeedKmh > maxSpeedRef.current) maxSpeedRef.current = calculatedSpeedKmh;
+          totalSpeedSumRef.current += calculatedSpeedKmh;
+          speedReadingsCountRef.current += 1;
           setSpeedAlert(calculatedSpeedKmh > (targetSpeed + 10));
           setUserLocation([lat, lon]);
           setGpsAccuracy(accuracy);
+          if (calculatedSpeedKmh >= 3 && accuracy <= 35) {
+            tripRoutePointsRef.current.push([lat, lon]);
+          }
           if (calculatedSpeedKmh >= 3 && prevCoordsRef.current && accuracy <= 35) {
             const distIncrement = haversineDistance(
               prevCoordsRef.current.lat,
@@ -187,19 +221,47 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   }, [task?.route_points, task?.is_free_drive]);
   const saveRealHazardToDb = useCallback(async (detection, imageBlob) => {
     if (!userLocation || currentSpeed < 3 || !isNearStretch(userLocation)) return;
+    const label = detection.display_label || detection.displayLabel || detection.className || 'pothole';
+    const now = Date.now();
+    if (lastHazardSnapTimeRef.current[label] && now - lastHazardSnapTimeRef.current[label] < 6000) {
+      return;
+    }
+    lastHazardSnapTimeRef.current[label] = now;
+    let publicUrl = null;
+    if (imageBlob) {
+      try {
+        const filePath = `${tripIdRef.current}/${now}_${label.replace(/[^a-zA-Z0-9]/g, '_')}.jpg`;
+        const { error: uploadErr } = await supabase.storage
+          .from('hazard-images')
+          .upload(filePath, imageBlob, { contentType: 'image/jpeg', upsert: true });
+        if (!uploadErr) {
+          const { data: urlData } = supabase.storage.from('hazard-images').getPublicUrl(filePath);
+          publicUrl = urlData?.publicUrl || null;
+        }
+      } catch {}
+    }
     try {
       const hazardPayload = {
-        type: detection.className || detection.app_type || 'pothole',
+        trip_id: tripIdRef.current,
+        vehicle_id: task?.assigned_vehicle_id || null,
+        vehicle_number: task?.assigned_vehicle_number || task?.vehicle_number || null,
+        type: detection.app_type || detection.className || 'pothole',
+        display_label: label,
+        astm_code: detection.astm_code || null,
         severity_score: detection.severity || 4,
         confidence_score: detection.confidence || 0.85,
-        status: 'under_review',
+        speed_kmh: currentSpeed,
         location: `POINT(${userLocation[1]} ${userLocation[0]})`,
+        image_url: publicUrl,
+        is_demo: false,
         source: gpuServerOnline ? 'yolo11_survey_unit' : 'tfjs_survey_unit',
+        status: 'under_review',
+        action_status: 'pending_review',
         created_at: new Date().toISOString()
       };
       await supabase.from('hazards').insert([hazardPayload]);
     } catch {}
-  }, [userLocation, currentSpeed, gpuServerOnline, isNearStretch]);
+  }, [userLocation, currentSpeed, gpuServerOnline, isNearStretch, task?.assigned_vehicle_id, task?.assigned_vehicle_number, task?.vehicle_number]);
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -352,18 +414,16 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
                 setPciRating(res.pci_rating || 'Good');
               }
               setFcwActive(Boolean(res.fcw_alert));
-              if (res.fcw_audio) {
-                playAlertChime(880);
-              }
+              if (res.fcw_audio) playAlertChime(880);
               if (hazs.length > 0) {
                 playAlertChime(660);
                 let newPotholes = 0;
                 let newCracks = 0;
                 let newOther = 0;
                 hazs.forEach(d => {
-                  const label = (d.display_label || d.className || '').toLowerCase();
-                  if (label.includes('pothole')) newPotholes++;
-                  else if (label.includes('crack')) newCracks++;
+                  const l = (d.display_label || d.className || '').toLowerCase();
+                  if (l.includes('pothole')) newPotholes++;
+                  else if (l.includes('crack')) newCracks++;
                   else newOther++;
                 });
                 setDetectionsCount(prev => ({
@@ -378,7 +438,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
                 offCanvas.getContext('2d').drawImage(video, 0, 0, 640, 360);
                 offCanvas.toBlob((blob) => {
                   if (blob) saveRealHazardToDb(hazs[0], blob);
-                }, 'image/jpeg', 0.8);
+                }, 'image/jpeg', 0.65);
               }
             }
           } else if (localModel) {
@@ -393,9 +453,9 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
               let newCracks = 0;
               let newOther = 0;
               currentDetections.forEach(d => {
-                const label = (d.displayLabel || d.className || '').toLowerCase();
-                if (label.includes('pothole')) newPotholes++;
-                else if (label.includes('crack')) newCracks++;
+                const l = (d.displayLabel || d.className || '').toLowerCase();
+                if (l.includes('pothole')) newPotholes++;
+                else if (l.includes('crack')) newCracks++;
                 else newOther++;
               });
               setDetectionsCount(prev => ({
@@ -410,7 +470,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
               offCanvas.getContext('2d').drawImage(video, 0, 0, 640, 360);
               offCanvas.toBlob((blob) => {
                 if (blob) saveRealHazardToDb(currentDetections[0], blob);
-              }, 'image/jpeg', 0.8);
+              }, 'image/jpeg', 0.65);
             }
           }
         } catch {}
@@ -425,12 +485,14 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     const interval = setInterval(() => {
       if (stoppedRef.current) return;
       const countNow = lastDetectionsRef.current.length;
+      const telemetryPoint = {
+        time: elapsedSeconds,
+        speed: currentSpeed,
+        hazardCount: countNow
+      };
+      speedTelemetryRef.current.push(telemetryPoint);
       setTelemetryHistory(hist => {
-        const next = [...hist, {
-          time: elapsedSeconds,
-          speed: currentSpeed,
-          hazardCount: countNow
-        }];
+        const next = [...hist, telemetryPoint];
         return next.slice(-40);
       });
     }, 1000);
@@ -484,20 +546,35 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   }, [telemetryHistory]);
   const handleStopSurvey = async () => {
     stoppedRef.current = true;
-    const finalTrip = {
-      id: `trip_${Date.now()}`,
-      task_id: task?.id || null,
+    const avgSpeed = speedReadingsCountRef.current > 0
+      ? Math.round((totalSpeedSumRef.current / speedReadingsCountRef.current) * 10) / 10
+      : currentSpeed;
+    const finalTripUpdate = {
+      end_time: new Date().toISOString(),
+      end_location: userLocation ? `POINT(${userLocation[1]} ${userLocation[0]})` : null,
       total_distance_km: distanceKm,
-      avg_speed_kmh: currentSpeed,
-      max_speed_kmh: currentSpeed,
+      avg_speed_kmh: avgSpeed,
+      max_speed_kmh: maxSpeedRef.current,
       total_hazards_count: detectionsCount.total,
       calculated_pci: pciScore,
       pci_category: pciRating,
-      status: 'completed',
-      created_at: new Date().toISOString()
+      trip_route_geojson: tripRoutePointsRef.current,
+      speed_telemetry: speedTelemetryRef.current,
+      status: 'completed'
     };
     try {
-      await supabase.from('survey_trips').insert([finalTrip]);
+      await supabase.from('survey_trips').update(finalTripUpdate).eq('id', tripIdRef.current);
+      if (task?.assigned_vehicle_id) {
+        const { data: vData } = await supabase.from('survey_vehicles').select('total_distance_km, defects_logged').eq('id', task.assigned_vehicle_id).single();
+        if (vData) {
+          await supabase.from('survey_vehicles').update({
+            total_distance_km: Math.round(((vData.total_distance_km || 0) + distanceKm) * 100) / 100,
+            defects_logged: (vData.defects_logged || 0) + detectionsCount.total,
+            status: 'idle',
+            last_heartbeat: new Date().toISOString()
+          }).eq('id', task.assigned_vehicle_id);
+        }
+      }
     } catch {}
     onFinish();
   };
@@ -549,7 +626,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
         <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
         <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         {fcwActive && (
-          <div style={{ position: 'absolute', top: 16, background: '#dc2626', color: '#ffffff', padding: '10px 24px', borderRadius: '8px', fontSize: '15px', fontWeight: 900, letterSpacing: '0.8px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 0 25px rgba(220, 38, 38, 0.85)', animation: 'pulse 1s infinite' }}>
+          <div style={{ position: 'absolute', top: 16, background: '#dc2626', color: '#ffffff', padding: '10px 24px', borderRadius: '8px', fontSize: '15px', fontWeight: 900, letterSpacing: '0.8px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 0 25px rgba(220, 38, 38, 0.85)' }}>
             <AlertTriangle size={22} />
             <span>COLLISION WARNING — BRAKE</span>
           </div>
