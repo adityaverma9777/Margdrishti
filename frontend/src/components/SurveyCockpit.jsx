@@ -1,29 +1,78 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Square, AlertTriangle, ShieldCheck, CheckCircle, Volume2, VolumeX, Eye, ArrowLeft, Camera, Activity, Gauge } from 'lucide-react';
+import { Square, ArrowLeft, Volume2, VolumeX, ShieldCheck, CheckCircle, AlertTriangle } from 'lucide-react';
+import * as tf from '@tensorflow/tfjs';
 import { supabase } from '../supabaseClient';
+import { checkGpuServerHealth, predictFrameGpu } from '../utils/gpuService';
+import { runInference, parseYoloOutputAll } from '../utils/tfjsParser';
+
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
 export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const graphCanvasRef = useRef(null);
+  const offscreenCanvasRef = useRef(document.createElement('canvas'));
   const audioCtxRef = useRef(null);
   const stoppedRef = useRef(false);
   const lastAlertTimeRef = useRef(0);
+  const prevCoordsRef = useRef(null);
+  const lastDetectionsRef = useRef([]);
 
-  const [currentSpeed, setCurrentSpeed] = useState(24);
+  const [localModel, setLocalModel] = useState(null);
+  const [gpuServerOnline, setGpuServerOnline] = useState(false);
+  const [engineReady, setEngineReady] = useState(false);
+  const [currentSpeed, setCurrentSpeed] = useState(0);
   const [targetSpeed] = useState(task?.target_speed_kmh || 25);
   const [pciScore, setPciScore] = useState(100);
-  const [detectionsCount, setDetectionsCount] = useState({ potholes: 0, cracks: 0, patches: 0, total: 0 });
-  const [fcwActive, setFcwActive] = useState(false);
+  const [gpsAccuracy, setGpsAccuracy] = useState(null);
+  const [userLocation, setUserLocation] = useState(null);
+  const [detectionsCount, setDetectionsCount] = useState({ potholes: 0, cracks: 0, other: 0, total: 0 });
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [distanceKm, setDistanceKm] = useState(0);
   const [telemetryHistory, setTelemetryHistory] = useState([]);
+  const [speedAlert, setSpeedAlert] = useState(false);
 
-  const playCollisionChime = useCallback(() => {
+  useEffect(() => {
+    let active = true;
+    const initEngine = async () => {
+      const gpuHealth = await checkGpuServerHealth();
+      if (!active) return;
+      if (gpuHealth && gpuHealth.online) {
+        setGpuServerOnline(true);
+        setEngineReady(true);
+      } else {
+        try {
+          const m = await tf.loadGraphModel('/model/model.json');
+          if (active) {
+            setLocalModel(m);
+            setEngineReady(true);
+          }
+        } catch {
+          if (active) setEngineReady(true);
+        }
+      }
+    };
+    initEngine();
+    return () => { active = false; };
+  }, []);
+
+  const playAlertChime = useCallback(() => {
     if (!soundEnabled) return;
     const now = Date.now();
-    if (now - lastAlertTimeRef.current < 3500) return;
+    if (now - lastAlertTimeRef.current < 4000) return;
     lastAlertTimeRef.current = now;
     try {
       if (!audioCtxRef.current) {
@@ -35,20 +84,20 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       const gain = ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.25);
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+      osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.2);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
-      osc.stop(ctx.currentTime + 0.25);
+      osc.stop(ctx.currentTime + 0.2);
     } catch {}
   }, [soundEnabled]);
 
   useEffect(() => {
     stoppedRef.current = false;
     let localStream = initialStream;
-    const initCamera = async () => {
+    const startCamera = async () => {
       if (!localStream) {
         try {
           localStream = await navigator.mediaDevices.getUserMedia({
@@ -61,152 +110,224 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
         videoRef.current.play().catch(() => {});
       }
     };
-    initCamera();
+    startCamera();
+
+    let watchId = null;
+    if ('geolocation' in navigator) {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          if (stoppedRef.current) return;
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const rawSpeed = pos.coords.speed;
+          const calculatedSpeedKmh = rawSpeed !== null && rawSpeed !== undefined && rawSpeed >= 0
+            ? Math.round(rawSpeed * 3.6 * 10) / 10
+            : 0;
+
+          setCurrentSpeed(calculatedSpeedKmh);
+          setSpeedAlert(calculatedSpeedKmh > (targetSpeed + 10));
+          setUserLocation([lat, lon]);
+          setGpsAccuracy(Math.round(pos.coords.accuracy || 2));
+
+          if (prevCoordsRef.current) {
+            const distIncrement = haversineDistance(
+              prevCoordsRef.current.lat,
+              prevCoordsRef.current.lon,
+              lat,
+              lon
+            );
+            if (distIncrement > 0.002 && distIncrement < 2.0) {
+              setDistanceKm(d => Math.round((d + distIncrement) * 100) / 100);
+            }
+          }
+          prevCoordsRef.current = { lat, lon };
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+      );
+    }
 
     const timer = setInterval(() => {
       if (stoppedRef.current) return;
       setElapsedSeconds(s => s + 1);
-      setCurrentSpeed(prev => {
-        const jitter = (Math.random() - 0.48) * 1.4;
-        const next = Math.max(16, Math.min(32, prev + jitter));
-        return Math.round(next * 10) / 10;
-      });
-      setDistanceKm(d => Math.round((d + (24 / 3600)) * 100) / 100);
     }, 1000);
 
     return () => {
       stoppedRef.current = true;
       clearInterval(timer);
-      if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
-      }
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
     };
-  }, [initialStream]);
+  }, [initialStream, targetSpeed]);
+
+  const saveRealHazardToDb = useCallback(async (detection, imageBlob) => {
+    if (!userLocation) return;
+    try {
+      const hazardPayload = {
+        type: detection.className || 'pothole',
+        severity_score: detection.severity || 4,
+        confidence_score: detection.confidence || 0.85,
+        status: 'under_review',
+        location: `POINT(${userLocation[1]} ${userLocation[0]})`,
+        source: gpuServerOnline ? 'yolo11_survey_unit' : 'tfjs_survey_unit',
+        created_at: new Date().toISOString()
+      };
+      await supabase.from('hazards').insert([hazardPayload]);
+    } catch {}
+  }, [userLocation, gpuServerOnline]);
 
   useEffect(() => {
+    const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    if (!video || !canvas || !engineReady) return;
     let animId;
+    let isInferring = false;
+    let lastInferTime = 0;
 
-    const renderLoop = (time) => {
+    const inferenceAndRenderLoop = async (now) => {
       if (stoppedRef.current) return;
+      const ctx = canvas.getContext('2d');
       const w = canvas.width;
       const h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
 
-      if (videoRef.current && videoRef.current.readyState >= 2) {
-        ctx.drawImage(videoRef.current, 0, 0, w, h);
+      if (video.readyState >= 2) {
+        ctx.drawImage(video, 0, 0, w, h);
       } else {
         ctx.fillStyle = '#0f172a';
         ctx.fillRect(0, 0, w, h);
       }
 
-      ctx.fillStyle = 'rgba(10, 132, 255, 0.22)';
+      ctx.fillStyle = 'rgba(10, 132, 255, 0.16)';
       ctx.beginPath();
-      ctx.moveTo(w * 0.38, h * 0.48);
-      ctx.lineTo(w * 0.62, h * 0.48);
+      ctx.moveTo(w * 0.38, h * 0.52);
+      ctx.lineTo(w * 0.62, h * 0.52);
       ctx.lineTo(w * 0.88, h);
       ctx.lineTo(w * 0.12, h);
       ctx.closePath();
       ctx.fill();
 
-      ctx.strokeStyle = 'rgba(100, 210, 255, 0.85)';
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(100, 210, 255, 0.8)';
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.moveTo(w * 0.38, h * 0.48);
+      ctx.moveTo(w * 0.38, h * 0.52);
       ctx.lineTo(w * 0.12, h);
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.moveTo(w * 0.62, h * 0.48);
+      ctx.moveTo(w * 0.62, h * 0.52);
       ctx.lineTo(w * 0.88, h);
       ctx.stroke();
 
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-      ctx.setLineDash([12, 16]);
-      ctx.beginPath();
-      ctx.moveTo(w * 0.5, h * 0.48);
-      ctx.lineTo(w * 0.5, h);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      if (!isInferring && now - lastInferTime > 120 && video.readyState >= 2) {
+        isInferring = true;
+        lastInferTime = now;
+        try {
+          let currentDetections = [];
+          if (gpuServerOnline) {
+            const res = await predictFrameGpu(video, 0.15);
+            if (res && res.detections) {
+              currentDetections = res.detections;
+              if (res.estimated_pci !== undefined) {
+                setPciScore(res.estimated_pci);
+              }
+            }
+          } else if (localModel) {
+            const preds = runInference(localModel, video);
+            currentDetections = await parseYoloOutputAll(preds, 0.14);
+            if (Array.isArray(preds)) preds.forEach(t => t.dispose());
+            else preds.dispose();
+          }
 
-      const cycle = (time % 8000) / 8000;
-      let hasCollisionAlert = false;
+          lastDetectionsRef.current = currentDetections;
 
-      if (cycle > 0.1 && cycle < 0.65) {
-        const leadX = w * 0.46;
-        const leadY = h * 0.44 + (cycle * h * 0.15);
-        const leadW = 70 + (cycle * 90);
-        const leadH = 50 + (cycle * 65);
-        const ttc = Math.max(1.4, Math.round((4.2 - (cycle * 3.5)) * 10) / 10);
-        const distM = Math.max(8, Math.round(35 - (cycle * 28)));
-        const isCritical = ttc < 2.0;
+          if (currentDetections.length > 0) {
+            playAlertChime();
+            let newPotholes = 0;
+            let newCracks = 0;
+            let newOther = 0;
+            currentDetections.forEach(d => {
+              const label = (d.displayLabel || d.className || '').toLowerCase();
+              if (label.includes('pothole')) newPotholes++;
+              else if (label.includes('crack')) newCracks++;
+              else newOther++;
+            });
+            setDetectionsCount(prev => ({
+              potholes: prev.potholes + newPotholes,
+              cracks: prev.cracks + newCracks,
+              other: prev.other + newOther,
+              total: prev.total + currentDetections.length
+            }));
 
-        if (isCritical) {
-          hasCollisionAlert = true;
-          playCollisionChime();
-        }
-
-        const bracketColor = isCritical ? '#dc2626' : ttc < 3.2 ? '#d97706' : '#16a34a';
-        ctx.strokeStyle = bracketColor;
-        ctx.lineWidth = 2.5;
-        ctx.strokeRect(leadX - leadW / 2, leadY - leadH / 2, leadW, leadH);
-
-        ctx.fillStyle = bracketColor;
-        ctx.font = 'bold 11px Inter, sans-serif';
-        const tagText = `${isCritical ? '⚠️ COLLISION WARNING' : 'Vehicle'} · ${distM}m (${ttc}s TTC)`;
-        const tagW = ctx.measureText(tagText).width + 12;
-        ctx.fillRect(leadX - leadW / 2, leadY - leadH / 2 - 20, tagW, 20);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(tagText, leadX - leadW / 2 + 6, leadY - leadH / 2 - 6);
+            const offCanvas = offscreenCanvasRef.current;
+            offCanvas.width = 640;
+            offCanvas.height = 360;
+            offCanvas.getContext('2d').drawImage(video, 0, 0, 640, 360);
+            offCanvas.toBlob((blob) => {
+              if (blob) saveRealHazardToDb(currentDetections[0], blob);
+            }, 'image/jpeg', 0.8);
+          }
+        } catch {}
+        isInferring = false;
       }
 
-      setFcwActive(hasCollisionAlert);
+      const activeDetections = lastDetectionsRef.current;
+      if (activeDetections && activeDetections.length > 0) {
+        activeDetections.forEach(d => {
+          if (!d.bbox) return;
+          let bx, by, bw, bh;
+          if (d.bbox.normalized) {
+            bx = d.bbox.normalized.x * w;
+            by = d.bbox.normalized.y * h;
+            bw = d.bbox.normalized.w * w;
+            bh = d.bbox.normalized.h * h;
+          } else {
+            const { cx, cy, w: bwRaw, h: bhRaw } = d.bbox;
+            bx = ((cx - bwRaw / 2) / 640) * w;
+            by = ((cy - bhRaw / 2) / 640) * h;
+            bw = (bwRaw / 640) * w;
+            bh = (bhRaw / 640) * h;
+          }
 
-      if (cycle > 0.4 && cycle < 0.95) {
-        const potY = h * 0.65 + ((cycle - 0.4) * h * 0.5);
-        const potX = w * 0.32;
-        const potW = 90;
-        const potH = 45;
+          const label = d.displayLabel || d.className || 'Hazard';
+          const isPothole = label.toLowerCase().includes('pothole');
+          const boxColor = isPothole ? '#dc2626' : '#d97706';
 
-        ctx.strokeStyle = '#dc2626';
-        ctx.lineWidth = 2.5;
-        ctx.strokeRect(potX, potY, potW, potH);
-        ctx.fillStyle = 'rgba(220, 38, 38, 0.15)';
-        ctx.fillRect(potX, potY, potW, potH);
+          ctx.strokeStyle = boxColor;
+          ctx.lineWidth = 2.5;
+          ctx.strokeRect(bx, by, bw, bh);
+          ctx.fillStyle = isPothole ? 'rgba(220, 38, 38, 0.15)' : 'rgba(217, 119, 6, 0.15)';
+          ctx.fillRect(bx, by, bw, bh);
 
-        ctx.fillStyle = '#dc2626';
-        ctx.font = 'bold 11px Inter, sans-serif';
-        ctx.fillRect(potX, potY - 18, 140, 18);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText('🕳️ POTHOLE (Sev: 5)', potX + 6, potY - 5);
+          const tagText = `${label} (${Math.round(d.confidence * 100)}%)`;
+          ctx.font = 'bold 11px Inter, sans-serif';
+          const tagW = ctx.measureText(tagText).width + 10;
+          ctx.fillStyle = boxColor;
+          ctx.fillRect(bx, Math.max(0, by - 18), tagW, 18);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(tagText, bx + 5, Math.max(12, by - 5));
+        });
       }
 
-      animId = requestAnimationFrame(renderLoop);
+      animId = requestAnimationFrame(inferenceAndRenderLoop);
     };
 
-    animId = requestAnimationFrame(renderLoop);
+    animId = requestAnimationFrame(inferenceAndRenderLoop);
     return () => cancelAnimationFrame(animId);
-  }, [playCollisionChime]);
+  }, [engineReady, gpuServerOnline, localModel, playAlertChime, saveRealHazardToDb]);
 
   useEffect(() => {
     const interval = setInterval(() => {
       if (stoppedRef.current) return;
-      const detectedInStep = Math.random() < 0.18 ? 1 : 0;
-      if (detectedInStep) {
-        setDetectionsCount(c => ({ ...c, potholes: c.potholes + 1, total: c.total + 1 }));
-        setPciScore(p => Math.max(35, p - 3));
-      }
+      const countNow = lastDetectionsRef.current.length;
       setTelemetryHistory(hist => {
         const next = [...hist, {
           time: elapsedSeconds,
           speed: currentSpeed,
-          hazardCount: detectedInStep
+          hazardCount: countNow
         }];
         return next.slice(-40);
       });
-    }, 1500);
+    }, 1000);
     return () => clearInterval(interval);
   }, [currentSpeed, elapsedSeconds]);
 
@@ -269,8 +390,8 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       id: `trip_${Date.now()}`,
       task_id: task?.id || null,
       total_distance_km: distanceKm,
-      avg_speed_kmh: 24.2,
-      max_speed_kmh: 31.0,
+      avg_speed_kmh: currentSpeed,
+      max_speed_kmh: currentSpeed,
       total_hazards_count: detectionsCount.total,
       calculated_pci: pciScore,
       pci_category: pciScore >= 80 ? 'Good' : pciScore >= 65 ? 'Satisfactory' : 'Fair',
@@ -280,7 +401,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     try {
       await supabase.from('survey_trips').insert([finalTrip]);
     } catch {}
-    alert(`Survey completed! Total distance: ${distanceKm} km • Defect count: ${detectionsCount.total} • Pavement Index: ${pciScore}/100`);
     onFinish();
   };
 
@@ -296,8 +416,10 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             <span>Exit Survey</span>
           </button>
           <div>
-            <div style={{ fontSize: '15px', fontWeight: 800 }}>{task?.road_name || task?.title || 'Active Survey Drive'}</div>
-            <div style={{ fontSize: '11px', color: '#94a3b8' }}>Target Speed: {targetSpeed} km/h • GPS Lock: 1.2m Accuracy</div>
+            <div style={{ fontSize: '15px', fontWeight: 800 }}>{task?.road_name || task?.title || 'Active Road Survey'}</div>
+            <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+              Target Speed: {targetSpeed} km/h • GPS Lock: {gpsAccuracy ? `${gpsAccuracy}m Accuracy` : 'Acquiring GPS...'}
+            </div>
           </div>
         </div>
 
@@ -305,12 +427,11 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
             style={{ background: 'none', border: 'none', color: soundEnabled ? '#38bdf8' : '#94a3b8', cursor: 'pointer' }}
-            title={soundEnabled ? 'Collision sound enabled' : 'Sound muted'}
           >
             {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
           </button>
-          <div style={{ background: currentSpeed > 32 ? 'rgba(220, 38, 38, 0.25)' : 'rgba(22, 163, 74, 0.25)', border: `1px solid ${currentSpeed > 32 ? '#dc2626' : '#16a34a'}`, padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, color: currentSpeed > 32 ? '#f87171' : '#4ade80' }}>
-            {currentSpeed} km/h (Speed Compliant)
+          <div style={{ background: speedAlert ? 'rgba(220, 38, 38, 0.25)' : 'rgba(22, 163, 74, 0.25)', border: `1px solid ${speedAlert ? '#dc2626' : '#16a34a'}`, padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, color: speedAlert ? '#f87171' : '#4ade80' }}>
+            {currentSpeed} km/h {speedAlert ? '(Reduce Speed)' : '(Speed Compliant)'}
           </div>
           <button
             onClick={handleStopSurvey}
@@ -326,10 +447,10 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
         <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
         <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
 
-        {fcwActive && (
-          <div style={{ position: 'absolute', top: 16, background: 'rgba(220, 38, 38, 0.92)', color: '#ffffff', padding: '8px 20px', borderRadius: '8px', fontSize: '14px', fontWeight: 800, letterSpacing: '0.5px', boxShadow: '0 4px 12px rgba(220, 38, 38, 0.5)', display: 'flex', alignItems: 'center', gap: '8px', animation: 'pulse 1s infinite' }}>
+        {speedAlert && (
+          <div style={{ position: 'absolute', top: 16, background: 'rgba(220, 38, 38, 0.92)', color: '#ffffff', padding: '8px 20px', borderRadius: '8px', fontSize: '14px', fontWeight: 800, letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <AlertTriangle size={18} />
-            <span>COLLISION WARNING — MAINTAIN DISTANCE</span>
+            <span>REDUCE SPEED — TARGET IS {targetSpeed} KM/H</span>
           </div>
         )}
 
@@ -344,7 +465,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             <span style={{ color: '#94a3b8' }}>PCI:</span> <strong style={{ color: pciScore >= 80 ? '#4ade80' : '#fbbf24' }}>{pciScore}/100</strong>
           </div>
           <div>
-            <span style={{ color: '#94a3b8' }}>Hazards Found:</span> <strong style={{ color: '#f87171' }}>{detectionsCount.total}</strong>
+            <span style={{ color: '#94a3b8' }}>Hazards Detected:</span> <strong style={{ color: '#f87171' }}>{detectionsCount.total}</strong>
           </div>
         </div>
       </div>
@@ -352,10 +473,10 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       <div style={{ background: '#ffffff', borderTop: '1px solid #cbd5e1', padding: '12px 18px', color: '#0f172a' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.5px' }}>
-            Synchronized Road Survey Telemetry (Speed vs. Hazard Frequency)
+            Live Survey Telemetry (Speed vs. Defect Occurrences)
           </div>
           <div style={{ fontSize: '11px', color: '#64748b' }}>
-            Blue Line: Vehicle Velocity (km/h) • Red Dots: Logged Hazards
+            Blue Line: Velocity (km/h) • Red Points: Actual Model Detections
           </div>
         </div>
         <div style={{ height: '100px', width: '100%' }}>

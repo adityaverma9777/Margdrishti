@@ -1,121 +1,138 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Cpu, Compass, Activity, Database, CheckCircle, AlertCircle, Loader2, ArrowRight, X } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { checkGpuServerHealth } from '../utils/gpuService';
 
 export default function PreFlightModal({ onClose, onPassed, roadName, targetSpeed }) {
   const [checks, setChecks] = useState({
-    camera: { status: 'checking', label: 'Optical Camera Feed', detail: 'Verifying video stream and focus' },
-    gpu: { status: 'checking', label: 'Local GPU Acceleration', detail: 'Verifying WebGPU / hardware pipeline' },
-    gps: { status: 'checking', label: 'GPS Satellite Position', detail: 'Locking coordinates (< 5m accuracy)' },
+    camera: { status: 'checking', label: 'Optical Camera Feed', detail: 'Verifying video stream' },
+    gpu: { status: 'checking', label: 'Inference Engine / GPU', detail: 'Connecting to local CUDA / WebGPU' },
+    gps: { status: 'checking', label: 'GPS Satellite Position', detail: 'Locking coordinates' },
     motion: { status: 'checking', label: 'Speed & Motion Gate', detail: 'Calibrating velocity calculation' },
-    database: { status: 'checking', label: 'Database Cloud Sync', detail: 'Checking Supabase write handshake' }
+    database: { status: 'checking', label: 'Database Cloud Sync', detail: 'Testing Supabase handshake' }
   });
-
   const [stream, setStream] = useState(null);
-  const [allPassed, setAllPassed] = useState(false);
 
   useEffect(() => {
     let active = true;
+    let localStream = null;
+
     const runDiagnostics = async () => {
       try {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
+        localStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
         });
         if (active) {
-          setStream(mediaStream);
+          setStream(localStream);
           setChecks(c => ({
             ...c,
-            camera: { status: 'passed', label: 'Optical Camera Feed', detail: '720p HD Stream Verified' }
+            camera: { status: 'passed', label: 'Optical Camera Feed', detail: 'Video stream active' }
           }));
         }
       } catch (err) {
         if (active) {
           setChecks(c => ({
             ...c,
-            camera: { status: 'passed', label: 'Optical Camera Feed', detail: 'WebCam / Video Sensor Ready' }
+            camera: { status: 'failed', label: 'Optical Camera Feed', detail: 'Camera permission denied or camera unavailable' }
           }));
         }
       }
 
-      await new Promise(r => setTimeout(r, 400));
-      const hasWebGpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
-      if (active) {
-        setChecks(c => ({
-          ...c,
-          gpu: {
-            status: 'passed',
-            label: 'Local Hardware Acceleration',
-            detail: hasWebGpu ? 'WebGPU Native Acceleration Active' : 'WebGL / Hardware Shader Pipeline Active'
+      try {
+        const gpuHealth = await checkGpuServerHealth();
+        if (active) {
+          if (gpuHealth && gpuHealth.online) {
+            setChecks(c => ({
+              ...c,
+              gpu: { status: 'passed', label: 'Inference Engine / GPU', detail: `Local CUDA Server Active (${gpuHealth.device || 'GPU'})` }
+            }));
+          } else {
+            const hasWebGpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
+            setChecks(c => ({
+              ...c,
+              gpu: { status: 'passed', label: 'Inference Engine / GPU', detail: hasWebGpu ? 'WebGPU Browser Acceleration' : 'WebGL / CPU Fallback Active' }
+            }));
           }
-        }));
+        }
+      } catch {
+        if (active) {
+          setChecks(c => ({
+            ...c,
+            gpu: { status: 'passed', label: 'Inference Engine / GPU', detail: 'Standard Engine Pipeline Ready' }
+          }));
+        }
       }
 
-      await new Promise(r => setTimeout(r, 400));
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             if (active) {
-              const acc = Math.round(pos.coords.accuracy || 3);
+              const acc = Math.round(pos.coords.accuracy || 5);
               setChecks(c => ({
                 ...c,
                 gps: { status: 'passed', label: 'GPS Satellite Position', detail: `Coordinates Locked (${acc}m accuracy)` }
               }));
             }
           },
-          () => {
+          (err) => {
             if (active) {
               setChecks(c => ({
                 ...c,
-                gps: { status: 'passed', label: 'GPS Satellite Position', detail: 'GPS Satellite Ready' }
+                gps: { status: 'failed', label: 'GPS Satellite Position', detail: err.message || 'GPS permission denied' }
               }));
             }
           },
-          { timeout: 3000, enableHighAccuracy: true }
+          { timeout: 5000, enableHighAccuracy: true }
         );
       } else {
         if (active) {
           setChecks(c => ({
             ...c,
-            gps: { status: 'passed', label: 'GPS Satellite Position', detail: 'GPS Location Ready' }
+            gps: { status: 'failed', label: 'GPS Satellite Position', detail: 'Geolocation not supported by device' }
           }));
         }
       }
 
-      await new Promise(r => setTimeout(r, 400));
       if (active) {
         setChecks(c => ({
           ...c,
-          motion: { status: 'passed', label: 'Speed & Motion Gate', detail: `Calibrated for target ${targetSpeed || 25} km/h` }
+          motion: { status: 'passed', label: 'Speed & Motion Gate', detail: `Target pace configured at ${targetSpeed || 25} km/h` }
         }));
       }
 
-      await new Promise(r => setTimeout(r, 400));
       try {
         const { error } = await supabase.from('hazards').select('id').limit(1);
         if (active) {
-          setChecks(c => ({
-            ...c,
-            database: { status: error ? 'passed' : 'passed', label: 'Database Cloud Sync', detail: 'Supabase Sync Ready' }
-          }));
+          if (error) {
+            setChecks(c => ({
+              ...c,
+              database: { status: 'failed', label: 'Database Cloud Sync', detail: error.message || 'Database error' }
+            }));
+          } else {
+            setChecks(c => ({
+              ...c,
+              database: { status: 'passed', label: 'Database Cloud Sync', detail: 'Cloud database connection verified' }
+            }));
+          }
         }
-      } catch {
+      } catch (err) {
         if (active) {
           setChecks(c => ({
             ...c,
-            database: { status: 'passed', label: 'Database Cloud Sync', detail: 'Local & Cloud Storage Ready' }
+            database: { status: 'failed', label: 'Database Cloud Sync', detail: 'Cloud sync unreachable' }
           }));
         }
       }
-
-      if (active) setAllPassed(true);
     };
 
     runDiagnostics();
     return () => {
       active = false;
-      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
     };
-  }, []);
+  }, [targetSpeed]);
+
+  const canProceed = Object.values(checks).every(c => c.status === 'passed');
 
   const handleProceed = () => {
     onPassed(stream);
@@ -140,10 +157,10 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
             <X size={18} />
           </button>
         </div>
-
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
           {Object.entries(checks).map(([key, item]) => {
             const isPassed = item.status === 'passed';
+            const isFailed = item.status === 'failed';
             return (
               <div
                 key={key}
@@ -153,13 +170,15 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
                   gap: '12px',
                   padding: '10px 14px',
                   borderRadius: 'var(--radius-sm)',
-                  background: isPassed ? '#f0fdf4' : 'var(--gov-card-subtle)',
-                  border: `1px solid ${isPassed ? '#bbf7d0' : 'var(--gov-border)'}`
+                  background: isPassed ? '#f0fdf4' : isFailed ? '#fef2f2' : 'var(--gov-card-subtle)',
+                  border: `1px solid ${isPassed ? '#bbf7d0' : isFailed ? '#fecaca' : 'var(--gov-border)'}`
                 }}
               >
                 <div style={{ flexShrink: 0 }}>
                   {isPassed ? (
                     <CheckCircle size={18} color="var(--gov-green)" />
+                  ) : isFailed ? (
+                    <AlertCircle size={18} color="var(--gov-red)" />
                   ) : (
                     <Loader2 size={18} color="var(--gov-blue)" style={{ animation: 'spin 1s linear infinite' }} />
                   )}
@@ -168,7 +187,7 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
                   <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)' }}>
                     {item.label}
                   </div>
-                  <div style={{ fontSize: '11px', color: isPassed ? 'var(--gov-green)' : 'var(--gov-text-muted)' }}>
+                  <div style={{ fontSize: '11px', color: isPassed ? 'var(--gov-green)' : isFailed ? 'var(--gov-red)' : 'var(--gov-text-muted)' }}>
                     {item.detail}
                   </div>
                 </div>
@@ -176,7 +195,6 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
             );
           })}
         </div>
-
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
           <button
             type="button"
@@ -187,10 +205,10 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
           </button>
           <button
             type="button"
-            disabled={!allPassed}
+            disabled={!canProceed}
             className="gov-btn-primary"
             onClick={handleProceed}
-            style={{ opacity: allPassed ? 1 : 0.6 }}
+            style={{ opacity: canProceed ? 1 : 0.6 }}
           >
             <span>Run Detections & Begin Survey</span>
             <ArrowRight size={15} />

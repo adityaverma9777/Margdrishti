@@ -54,7 +54,7 @@ export default function OfficialDashboard() {
           id: h.id,
           defectType: h.type === 'pothole' ? 'Pothole (ASTM 13)' : h.type === 'crack' ? 'Road Crack (ASTM 1/10)' : `${h.type} (Distress)`,
           severity: h.severity_score || 4,
-          speedKmh: 24,
+          speedKmh: h.speed_kmh || null,
           location: h.location ? `Geo: ${JSON.stringify(h.location)}` : 'Survey Segment',
           time: new Date(h.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
           status: h.status === 'verified' ? 'fit' : h.status === 'under_review' ? 'in_validation' : h.status === 'rejected' ? 'rescan_required' : 'pending_review',

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
+    "@tensorflow/tfjs": "^4.22.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.16.0",
     "onnxruntime-web": "^1.21.0-dev.20250206-8d5f35d21b",
