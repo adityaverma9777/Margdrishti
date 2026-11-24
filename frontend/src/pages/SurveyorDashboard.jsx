@@ -5,7 +5,7 @@ import { supabase } from '../supabaseClient';
 import PreFlightModal from '../components/PreFlightModal';
 import SurveyCockpit from '../components/SurveyCockpit';
 import SurveyorTrackMap from '../components/SurveyorTrackMap';
-
+import TurnByTurnNavModal from '../components/TurnByTurnNavModal';
 export default function SurveyorDashboard() {
   const { currentUser } = useAuth();
   const [tasks, setTasks] = useState([]);
@@ -13,6 +13,7 @@ export default function SurveyorDashboard() {
   const [loading, setLoading] = useState(true);
   const [showDefineModal, setShowDefineModal] = useState(false);
   const [showPreFlight, setShowPreFlight] = useState(false);
+  const [isNavigatingToStart, setIsNavigatingToStart] = useState(false);
   const [isSurveyingActive, setIsSurveyingActive] = useState(false);
   const [surveyStream, setSurveyStream] = useState(null);
   const [newRoadName, setNewRoadName] = useState('');
@@ -23,7 +24,6 @@ export default function SurveyorDashboard() {
   const [userLocation, setUserLocation] = useState(null);
   const [trackPoints, setTrackPoints] = useState([]);
   const prevCoordsRef = useRef(null);
-
   const loadSurveyData = async () => {
     setLoading(true);
     try {
@@ -38,7 +38,6 @@ export default function SurveyorDashboard() {
         }
       }
     } catch {}
-
     try {
       const { data: dbTrips } = await supabase
         .from('survey_trips')
@@ -48,11 +47,9 @@ export default function SurveyorDashboard() {
     } catch {}
     setLoading(false);
   };
-
   useEffect(() => {
     loadSurveyData();
   }, []);
-
   useEffect(() => {
     if (!('geolocation' in navigator)) return;
     const watchId = navigator.geolocation.watchPosition(
@@ -75,7 +72,6 @@ export default function SurveyorDashboard() {
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
-
   const handleCreateStretch = async (e) => {
     e.preventDefault();
     if (!newRoadName) return;
@@ -100,12 +96,10 @@ export default function SurveyorDashboard() {
     setStartPoint('');
     setEndPoint('');
   };
-
   const totalKmSurveyed = trips.reduce((acc, t) => acc + (Number(t.total_distance_km) || 0), 0);
   const avgPci = trips.length > 0
     ? Math.round(trips.reduce((acc, t) => acc + (Number(t.calculated_pci) || 0), 0) / trips.length)
     : null;
-
   return (
     <div className="gov-container" style={{ padding: '24px 20px', minHeight: 'calc(100vh - 60px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '22px', flexWrap: 'wrap', gap: '16px' }}>
@@ -137,7 +131,6 @@ export default function SurveyorDashboard() {
           </button>
         </div>
       </div>
-
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
         <div className="gov-card" style={{ padding: '18px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
@@ -150,7 +143,6 @@ export default function SurveyorDashboard() {
             {trips.length} Completed Trips
           </div>
         </div>
-
         <div className="gov-card" style={{ padding: '18px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
             Assigned Stretches
@@ -162,7 +154,6 @@ export default function SurveyorDashboard() {
             Tasks from Official Desk
           </div>
         </div>
-
         <div className="gov-card" style={{ padding: '18px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
             Pavement Index (PCI)
@@ -174,7 +165,6 @@ export default function SurveyorDashboard() {
             Calculated from completed scans
           </div>
         </div>
-
         <div className="gov-card" style={{ padding: '18px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
             Sensor & Camera
@@ -188,14 +178,12 @@ export default function SurveyorDashboard() {
           </div>
         </div>
       </div>
-
       <SurveyorTrackMap
         userLocation={userLocation}
         trackPoints={trackPoints}
         taskRoutePoints={selectedTask?.route_points || null}
         height={200}
       />
-
       <div style={{ display: 'grid', gridTemplateColumns: tasks.length > 0 ? 'minmax(320px, 1.2fr) minmax(360px, 1.8fr)' : '1fr', gap: '20px' }}>
         <div className="gov-card" style={{ overflow: 'hidden' }}>
           <div style={{ padding: '14px 18px', background: 'var(--gov-card-subtle)', borderBottom: '1px solid var(--gov-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -203,7 +191,6 @@ export default function SurveyorDashboard() {
               Assigned Road Stretches ({tasks.length})
             </span>
           </div>
-
           {loading ? (
             <div style={{ padding: '32px', textAlign: 'center', color: 'var(--gov-text-muted)', fontSize: '13px' }}>
               Loading stretches...
@@ -253,7 +240,6 @@ export default function SurveyorDashboard() {
             </div>
           )}
         </div>
-
         {selectedTask && (
           <div className="gov-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div style={{ borderBottom: '1px solid var(--gov-border)', paddingBottom: '12px' }}>
@@ -264,14 +250,12 @@ export default function SurveyorDashboard() {
                 {selectedTask.start_address} to {selectedTask.end_address}
               </div>
             </div>
-
             <SurveyorTrackMap
               userLocation={userLocation}
               trackPoints={trackPoints}
               taskRoutePoints={selectedTask.route_points || null}
               height={260}
             />
-
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <div style={{ background: 'var(--gov-card-subtle)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
                 <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Target Survey Speed</div>
@@ -286,16 +270,11 @@ export default function SurveyorDashboard() {
                 </div>
               </div>
             </div>
-
             <div style={{ paddingTop: '4px', borderTop: '1px solid var(--gov-border)', display: 'flex', gap: '10px' }}>
               <button
                 className="gov-btn-secondary"
                 style={{ flex: 1 }}
-                onClick={() => {
-                  if (userLocation) {
-                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedTask.start_address}`, '_blank');
-                  }
-                }}
+                onClick={() => setIsNavigatingToStart(true)}
               >
                 <Compass size={15} />
                 <span>Navigate to Start</span>
@@ -312,7 +291,6 @@ export default function SurveyorDashboard() {
           </div>
         )}
       </div>
-
       {showDefineModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
           <div className="gov-card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
@@ -382,7 +360,6 @@ export default function SurveyorDashboard() {
           </div>
         </div>
       )}
-
       {showPreFlight && (
         <PreFlightModal
           roadName={selectedTask?.road_name || selectedTask?.title || 'Road Inspection Run'}
@@ -395,7 +372,6 @@ export default function SurveyorDashboard() {
           }}
         />
       )}
-
       {isSurveyingActive && (
         <SurveyCockpit
           task={selectedTask}
@@ -404,6 +380,17 @@ export default function SurveyorDashboard() {
             setIsSurveyingActive(false);
             setSurveyStream(null);
             loadSurveyData();
+          }}
+        />
+      )}
+      {isNavigatingToStart && selectedTask && (
+        <TurnByTurnNavModal
+          task={selectedTask}
+          userLocation={userLocation}
+          onClose={() => setIsNavigatingToStart(false)}
+          onLaunchSurvey={() => {
+            setIsNavigatingToStart(false);
+            setShowPreFlight(true);
           }}
         />
       )}
