@@ -8,3 +8,9 @@ dist/
 .env.local
 .DS_Store
 Thumbs.db
+*.mp4
+demo_scans/
+*.log
+*.mp4
+demo_scans/
+*.log
