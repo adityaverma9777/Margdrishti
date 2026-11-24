@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Play, Navigation, CheckCircle, Clock, Plus, Route, AlertCircle, Compass } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
+import PreFlightModal from '../components/PreFlightModal';
+import SurveyCockpit from '../components/SurveyCockpit';
 
 export default function SurveyorDashboard() {
   const { currentUser } = useAuth();
@@ -9,6 +11,9 @@ export default function SurveyorDashboard() {
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showDefineModal, setShowDefineModal] = useState(false);
+  const [showPreFlight, setShowPreFlight] = useState(false);
+  const [isSurveyingActive, setIsSurveyingActive] = useState(false);
+  const [surveyStream, setSurveyStream] = useState(null);
   const [newRoadName, setNewRoadName] = useState('');
   const [startPoint, setStartPoint] = useState('');
   const [endPoint, setEndPoint] = useState('');
@@ -98,7 +103,7 @@ export default function SurveyorDashboard() {
           </button>
           <button
             className="gov-btn-primary"
-            onClick={() => alert('Starting survey inspection mode...')}
+            onClick={() => setShowPreFlight(true)}
           >
             <Play size={15} fill="#ffffff" />
             <span>Start Survey</span>
@@ -253,7 +258,7 @@ export default function SurveyorDashboard() {
               <button
                 className="gov-btn-primary"
                 style={{ flex: 1.2 }}
-                onClick={() => alert(`Starting survey on ${selectedTask.road_name || selectedTask.title}`)}
+                onClick={() => setShowPreFlight(true)}
               >
                 <Play size={15} fill="#ffffff" />
                 <span>Launch Survey</span>
@@ -331,6 +336,31 @@ export default function SurveyorDashboard() {
             </form>
           </div>
         </div>
+      )}
+
+      {showPreFlight && (
+        <PreFlightModal
+          roadName={selectedTask?.road_name || selectedTask?.title || 'Road Inspection Run'}
+          targetSpeed={selectedTask?.target_speed_kmh || 25}
+          onClose={() => setShowPreFlight(false)}
+          onPassed={(stream) => {
+            setShowPreFlight(false);
+            setSurveyStream(stream);
+            setIsSurveyingActive(true);
+          }}
+        />
+      )}
+
+      {isSurveyingActive && (
+        <SurveyCockpit
+          task={selectedTask}
+          initialStream={surveyStream}
+          onFinish={() => {
+            setIsSurveyingActive(false);
+            setSurveyStream(null);
+            loadSurveyData();
+          }}
+        />
       )}
     </div>
   );
