@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { Route, PenTool, RotateCcw, Check, Zap } from 'lucide-react';
 import { STATE_COORDINATES, fetchCommuterRoutes, calculatePathDistance } from '../utils/routingEngine';
@@ -25,34 +24,13 @@ const waypointIcon = L.divIcon({
   iconAnchor: [5, 5]
 });
 
-function MapViewController({ center, zoom }) {
-  const map = useMap();
-  useEffect(() => {
-    map.invalidateSize();
-    if (center) {
-      map.setView(center, zoom, { animate: true, duration: 0.8 });
-    }
-    const timer = setTimeout(() => {
-      map.invalidateSize();
-    }, 200);
-    return () => clearTimeout(timer);
-  }, [center, zoom, map]);
-  return null;
-}
-
-function MapClickHandler({ mode, onMapClick }) {
-  useMapEvents({
-    click(e) {
-      onMapClick([e.latlng.lat, e.latlng.lng]);
-    }
-  });
-  return null;
-}
-
 export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConfirmed }) {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+  const tileLayerRef = useRef(null);
+  const drawingLayerRef = useRef(null);
+
   const stateConfig = STATE_COORDINATES[selectedState] || STATE_COORDINATES['Assam'];
-  const [mapCenter, setMapCenter] = useState(stateConfig.center);
-  const [mapZoom, setMapZoom] = useState(stateConfig.zoom);
   const [planMode, setPlanMode] = useState('commuter');
   const [whiteRoadsActive, setWhiteRoadsActive] = useState(false);
 
@@ -65,20 +43,145 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
   const [drawnPoints, setDrawnPoints] = useState([]);
   const [drawnDistance, setDrawnDistance] = useState(0);
 
+  const planModeRef = useRef(planMode);
+  planModeRef.current = planMode;
+  const startPointRef = useRef(startPoint);
+  startPointRef.current = startPoint;
+  const endPointRef = useRef(endPoint);
+  endPointRef.current = endPoint;
+  const drawnPointsRef = useRef(drawnPoints);
+  drawnPointsRef.current = drawnPoints;
+
   useEffect(() => {
-    const config = STATE_COORDINATES[selectedState] || STATE_COORDINATES['Assam'];
-    setMapCenter(config.center);
-    setMapZoom(config.zoom);
-    handleReset();
+    if (!containerRef.current) return;
+    if (!mapRef.current) {
+      if (containerRef.current._leaflet_id) {
+        containerRef.current._leaflet_id = null;
+      }
+      const map = L.map(containerRef.current, {
+        center: stateConfig.center,
+        zoom: stateConfig.zoom,
+        zoomControl: false
+      });
+      const tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', {
+        subdomains: ['a', 'b', 'c', 'd'],
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap &copy; CARTO'
+      }).addTo(map);
+      tileLayerRef.current = tiles;
+      const layer = L.layerGroup().addTo(map);
+      drawingLayerRef.current = layer;
+      mapRef.current = map;
+      map.on('click', (e) => {
+        const coords = [e.latlng.lat, e.latlng.lng];
+        if (planModeRef.current === 'commuter') {
+          if (!startPointRef.current) {
+            setStartPoint(coords);
+          } else if (!endPointRef.current) {
+            setEndPoint(coords);
+            setCalculatingRoutes(true);
+            fetchCommuterRoutes(startPointRef.current, coords).then((routes) => {
+              setCommuterRoutes(routes);
+              setSelectedRouteIdx(0);
+              setCalculatingRoutes(false);
+            });
+          } else {
+            setStartPoint(coords);
+            setEndPoint(null);
+            setCommuterRoutes([]);
+            setSelectedRouteIdx(0);
+          }
+        } else if (planModeRef.current === 'draw') {
+          const next = [...drawnPointsRef.current, coords];
+          setDrawnPoints(next);
+          setDrawnDistance(calculatePathDistance(next));
+        }
+      });
+      setTimeout(() => {
+        if (mapRef.current) mapRef.current.invalidateSize();
+      }, 100);
+      setTimeout(() => {
+        if (mapRef.current) mapRef.current.invalidateSize();
+      }, 400);
+    } else {
+      mapRef.current.setView(stateConfig.center, stateConfig.zoom, { animate: true });
+      setTimeout(() => {
+        if (mapRef.current) mapRef.current.invalidateSize();
+      }, 150);
+    }
   }, [selectedState]);
 
   useEffect(() => {
-    if (planMode === 'draw') {
-      setWhiteRoadsActive(true);
-    } else {
-      setWhiteRoadsActive(false);
-    }
+    if (!mapRef.current || !tileLayerRef.current) return;
+    mapRef.current.removeLayer(tileLayerRef.current);
+    const newTiles = whiteRoadsActive
+      ? L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+          subdomains: ['a', 'b', 'c', 'd'],
+          maxZoom: 19,
+          attribution: '&copy; OpenStreetMap &copy; CARTO'
+        })
+      : L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', {
+          subdomains: ['a', 'b', 'c', 'd'],
+          maxZoom: 19,
+          attribution: '&copy; OpenStreetMap &copy; CARTO'
+        });
+    newTiles.addTo(mapRef.current);
+    tileLayerRef.current = newTiles;
+  }, [whiteRoadsActive]);
+
+  useEffect(() => {
+    if (planMode === 'draw') setWhiteRoadsActive(true);
+    else setWhiteRoadsActive(false);
   }, [planMode]);
+
+  useEffect(() => {
+    if (!mapRef.current || !drawingLayerRef.current) return;
+    const layer = drawingLayerRef.current;
+    layer.clearLayers();
+
+    if (startPoint) {
+      L.marker(startPoint, { icon: startIcon }).addTo(layer);
+    }
+    if (endPoint) {
+      L.marker(endPoint, { icon: endIcon }).addTo(layer);
+    }
+
+    if (planMode === 'commuter' && commuterRoutes.length > 0) {
+      commuterRoutes.forEach((route, i) => {
+        const isSelected = selectedRouteIdx === i;
+        const poly = L.polyline(route.geometry, {
+          color: isSelected ? '#0284c7' : '#94a3b8',
+          weight: isSelected ? 5.5 : 3.5,
+          opacity: isSelected ? 0.95 : 0.6,
+          dashArray: isSelected ? null : '6, 6'
+        });
+        poly.on('click', () => setSelectedRouteIdx(i));
+        poly.addTo(layer);
+      });
+    }
+
+    if (planMode === 'draw') {
+      drawnPoints.forEach((pt) => {
+        L.marker(pt, { icon: waypointIcon }).addTo(layer);
+      });
+      if (drawnPoints.length > 1) {
+        L.polyline(drawnPoints, {
+          color: whiteRoadsActive ? '#38bdf8' : '#0284c7',
+          weight: 4.5,
+          opacity: 0.95
+        }).addTo(layer);
+      }
+    }
+  }, [startPoint, endPoint, commuterRoutes, selectedRouteIdx, planMode, drawnPoints, whiteRoadsActive]);
+
+  useEffect(() => {
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, []);
 
   const handleReset = () => {
     setStartPoint(null);
@@ -87,30 +190,6 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
     setSelectedRouteIdx(0);
     setDrawnPoints([]);
     setDrawnDistance(0);
-  };
-
-  const handleMapClick = async (coords) => {
-    if (planMode === 'commuter') {
-      if (!startPoint) {
-        setStartPoint(coords);
-      } else if (!endPoint) {
-        setEndPoint(coords);
-        setCalculatingRoutes(true);
-        const routes = await fetchCommuterRoutes(startPoint, coords);
-        setCommuterRoutes(routes);
-        setSelectedRouteIdx(0);
-        setCalculatingRoutes(false);
-      } else {
-        setStartPoint(coords);
-        setEndPoint(null);
-        setCommuterRoutes([]);
-        setSelectedRouteIdx(0);
-      }
-    } else if (planMode === 'draw') {
-      const next = [...drawnPoints, coords];
-      setDrawnPoints(next);
-      setDrawnDistance(calculatePathDistance(next));
-    }
   };
 
   const handleUndoDrawnPoint = () => {
@@ -232,70 +311,10 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
         </div>
       </div>
 
-      <div style={{ position: 'relative', width: '100%', height: '380px', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--gov-border)', background: '#e2e8f0' }}>
-        <MapContainer
-          center={mapCenter}
-          zoom={mapZoom}
-          style={{ width: '100%', height: '100%', cursor: planMode === 'draw' ? 'crosshair' : 'default' }}
-          zoomControl={false}
-        >
-          <MapViewController center={mapCenter} zoom={mapZoom} />
-          <MapClickHandler mode={planMode} onMapClick={handleMapClick} />
+      <div style={{ position: 'relative', width: '100%', height: '380px', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--gov-border)', background: '#f8fafc' }}>
+        <div ref={containerRef} style={{ width: '100%', height: '380px', cursor: planMode === 'draw' ? 'crosshair' : 'default' }} />
 
-          {whiteRoadsActive ? (
-            <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              subdomains={['a', 'b', 'c', 'd']}
-              attribution='&copy; OpenStreetMap contributors &copy; CARTO'
-            />
-          ) : (
-            <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-              subdomains={['a', 'b', 'c', 'd']}
-              attribution='&copy; OpenStreetMap contributors &copy; CARTO'
-            />
-          )}
-
-          {startPoint && <Marker position={startPoint} icon={startIcon} />}
-          {endPoint && <Marker position={endPoint} icon={endIcon} />}
-
-          {planMode === 'commuter' && commuterRoutes.map((route, i) => {
-            const isSelected = selectedRouteIdx === i;
-            return (
-              <Polyline
-                key={route.id}
-                positions={route.geometry}
-                eventHandlers={{ click: () => setSelectedRouteIdx(i) }}
-                pathOptions={{
-                  color: isSelected ? '#0284c7' : '#94a3b8',
-                  weight: isSelected ? 5.5 : 3.5,
-                  opacity: isSelected ? 0.95 : 0.6,
-                  dashArray: isSelected ? null : '6, 6'
-                }}
-              />
-            );
-          })}
-
-          {planMode === 'draw' && (
-            <>
-              {drawnPoints.map((pt, idx) => (
-                <Marker key={idx} position={pt} icon={waypointIcon} />
-              ))}
-              {drawnPoints.length > 1 && (
-                <Polyline
-                  positions={drawnPoints}
-                  pathOptions={{
-                    color: whiteRoadsActive ? '#38bdf8' : '#0284c7',
-                    weight: 4.5,
-                    opacity: 0.95
-                  }}
-                />
-              )}
-            </>
-          )}
-        </MapContainer>
-
-        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 500, background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(6px)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--gov-border)', fontSize: '12px', boxShadow: 'var(--shadow-sm)' }}>
+        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 1000, background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(6px)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--gov-border)', fontSize: '12px', boxShadow: 'var(--shadow-sm)' }}>
           {planMode === 'commuter' ? (
             <div>
               {!startPoint && <span>Click anywhere on the map to place <strong>Point A (Start)</strong></span>}
