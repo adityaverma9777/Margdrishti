@@ -227,15 +227,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           ctx.fillStyle = 'rgba(10, 132, 255, 0.28)';
           ctx.fill();
         });
-      } else {
-        ctx.fillStyle = 'rgba(10, 132, 255, 0.28)';
-        ctx.beginPath();
-        ctx.moveTo(w * 0.38, h * 0.52);
-        ctx.lineTo(w * 0.62, h * 0.52);
-        ctx.lineTo(w * 0.88, h);
-        ctx.lineTo(w * 0.12, h);
-        ctx.closePath();
-        ctx.fill();
       }
       if (laneLines.length > 0) {
         ctx.strokeStyle = 'rgba(100, 210, 255, 0.85)';
@@ -251,17 +242,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           }
           ctx.stroke();
         });
-      } else {
-        ctx.strokeStyle = 'rgba(100, 210, 255, 0.85)';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(w * 0.38, h * 0.52);
-        ctx.lineTo(w * 0.12, h);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(w * 0.62, h * 0.52);
-        ctx.lineTo(w * 0.88, h);
-        ctx.stroke();
       }
       if (vehicles.length > 0) {
         vehicles.forEach(veh => {

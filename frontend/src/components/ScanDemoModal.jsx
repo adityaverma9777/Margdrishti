@@ -1,33 +1,12 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { X, Play, Pause, RotateCcw, Volume2, VolumeX, Activity, AlertTriangle, Layers, Car, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, Volume2, VolumeX, Activity, AlertTriangle } from 'lucide-react';
 import * as tf from '@tensorflow/tfjs';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
 import { runInference, parseYoloOutputAll } from '../utils/tfjsParser';
 const DEMO_VIDEOS = [
-  {
-    id: 'video1',
-    src: '/demo_scans/video1.mp4',
-    title: 'Urban Arterial Corridor',
-    subtitle: 'Primary Highway • Dense Traffic & Potholes',
-    tag: 'Highway / NH',
-    desc: 'Dense vehicular corridor testing crack propagation, alligatoring, and lead-vehicle distance tracking.'
-  },
-  {
-    id: 'video2',
-    src: '/demo_scans/video2.mp4',
-    title: 'Collector Roadway Stretch',
-    subtitle: 'Urban Secondary • Patching & Lane Degradation',
-    tag: 'Collector',
-    desc: 'Mixed pavement conditions evaluating TwinLiteNet+ lane boundary delineation under varied lighting.'
-  },
-  {
-    id: 'video3',
-    src: '/demo_scans/video3.mp4',
-    title: 'State Highway Sector',
-    subtitle: 'High Velocity Transit • Surface Drop-offs',
-    tag: 'State Highway',
-    desc: 'High-speed transit evaluating ASTM D6433 deduction accuracy and forward collision warnings.'
-  }
+  { id: 'video1', src: '/demo_scans/video1.mp4', label: 'Footage 1' },
+  { id: 'video2', src: '/demo_scans/video2.mp4', label: 'Footage 2' },
+  { id: 'video3', src: '/demo_scans/video3.mp4', label: 'Footage 3' }
 ];
 export default function ScanDemoModal({ onClose }) {
   const [selectedVideo, setSelectedVideo] = useState(DEMO_VIDEOS[0]);
@@ -35,10 +14,8 @@ export default function ScanDemoModal({ onClose }) {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [pciScore, setPciScore] = useState(100);
   const [pciRating, setPciRating] = useState('Good');
-  const [fps, setFps] = useState(0);
-  const [inferenceMs, setInferenceMs] = useState(0);
-  const [hazardsCount, setHazardsCount] = useState({ potholes: 0, cracks: 0, total: 0 });
-  const [activeVehiclesCount, setActiveVehiclesCount] = useState(0);
+  const [hazardsCount, setHazardsCount] = useState(0);
+  const [vehiclesCount, setVehiclesCount] = useState(0);
   const [fcwActive, setFcwActive] = useState(false);
   const [gpuServerOnline, setGpuServerOnline] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -98,8 +75,8 @@ export default function ScanDemoModal({ onClose }) {
     setSelectedVideo(v);
     setPciScore(100);
     setPciRating('Good');
-    setHazardsCount({ potholes: 0, cracks: 0, total: 0 });
-    setActiveVehiclesCount(0);
+    setHazardsCount(0);
+    setVehiclesCount(0);
     setFcwActive(false);
     lastTriLayerRef.current = null;
     lastDetectionsRef.current = [];
@@ -140,13 +117,10 @@ export default function ScanDemoModal({ onClose }) {
         const ctx = canvas.getContext('2d');
         const w = canvas.width;
         const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
         if (video.readyState >= 2) {
-          ctx.drawImage(video, 0, 0, w, h);
           setCurrentTime(video.currentTime);
           if (video.duration && !isNaN(video.duration)) setDuration(video.duration);
-        } else {
-          ctx.fillStyle = '#0f172a';
-          ctx.fillRect(0, 0, w, h);
         }
         const triData = lastTriLayerRef.current;
         const drivablePolys = triData?.drivable_area || [];
@@ -164,15 +138,6 @@ export default function ScanDemoModal({ onClose }) {
             ctx.fillStyle = 'rgba(10, 132, 255, 0.28)';
             ctx.fill();
           });
-        } else {
-          ctx.fillStyle = 'rgba(10, 132, 255, 0.25)';
-          ctx.beginPath();
-          ctx.moveTo(w * 0.38, h * 0.52);
-          ctx.lineTo(w * 0.62, h * 0.52);
-          ctx.lineTo(w * 0.88, h);
-          ctx.lineTo(w * 0.12, h);
-          ctx.closePath();
-          ctx.fill();
         }
         if (laneLines.length > 0) {
           ctx.strokeStyle = 'rgba(100, 210, 255, 0.85)';
@@ -188,17 +153,6 @@ export default function ScanDemoModal({ onClose }) {
             }
             ctx.stroke();
           });
-        } else {
-          ctx.strokeStyle = 'rgba(100, 210, 255, 0.85)';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(w * 0.38, h * 0.52);
-          ctx.lineTo(w * 0.12, h);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(w * 0.62, h * 0.52);
-          ctx.lineTo(w * 0.88, h);
-          ctx.stroke();
         }
         if (vehicles.length > 0) {
           vehicles.forEach(veh => {
@@ -216,7 +170,7 @@ export default function ScanDemoModal({ onClose }) {
               vh = (veh.bbox.h / 360) * h;
             }
             const bracketColor = veh.color || '#30D158';
-            const bracketLen = Math.min(22, Math.min(vw, vh) * 0.35);
+            const bracketLen = Math.min(20, Math.min(vw, vh) * 0.35);
             ctx.strokeStyle = bracketColor;
             ctx.lineWidth = veh.alert_level === 'warning' ? 3.5 : 2.5;
             ctx.beginPath();
@@ -301,26 +255,11 @@ export default function ScanDemoModal({ onClose }) {
                   setPciScore(res.estimated_pci);
                   setPciRating(res.pci_rating || 'Good');
                 }
-                if (res.fps) setFps(res.fps);
-                if (res.inference_ms) setInferenceMs(res.inference_ms);
                 setFcwActive(Boolean(res.fcw_alert));
-                setActiveVehiclesCount((res.vehicles || []).length);
+                setVehiclesCount((res.vehicles || []).length);
+                setHazardsCount(hazs.length);
                 if (res.fcw_audio) playAlertChime(880);
-                if (hazs.length > 0) {
-                  playAlertChime(660);
-                  let pCount = 0;
-                  let cCount = 0;
-                  hazs.forEach(item => {
-                    const l = (item.display_label || item.className || '').toLowerCase();
-                    if (l.includes('pothole')) pCount++;
-                    else if (l.includes('crack')) cCount++;
-                  });
-                  setHazardsCount(prev => ({
-                    potholes: prev.potholes + pCount,
-                    cracks: prev.cracks + cCount,
-                    total: prev.total + hazs.length
-                  }));
-                }
+                if (hazs.length > 0) playAlertChime(660);
               }
             } else if (localModelRef.current) {
               const preds = runInference(localModelRef.current, video);
@@ -328,21 +267,8 @@ export default function ScanDemoModal({ onClose }) {
               if (Array.isArray(preds)) preds.forEach(t => t.dispose());
               else preds.dispose();
               lastDetectionsRef.current = currentDetections;
-              if (currentDetections.length > 0) {
-                playAlertChime(660);
-                let pCount = 0;
-                let cCount = 0;
-                currentDetections.forEach(item => {
-                  const l = (item.displayLabel || item.className || '').toLowerCase();
-                  if (l.includes('pothole')) pCount++;
-                  else if (l.includes('crack')) cCount++;
-                });
-                setHazardsCount(prev => ({
-                  potholes: prev.potholes + pCount,
-                  cracks: prev.cracks + cCount,
-                  total: prev.total + currentDetections.length
-                }));
-              }
+              setHazardsCount(currentDetections.length);
+              if (currentDetections.length > 0) playAlertChime(660);
             }
           } catch {}
           isInferringRef.current = false;
@@ -363,72 +289,51 @@ export default function ScanDemoModal({ onClose }) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(10, 15, 29, 0.94)', backdropFilter: 'blur(16px)', display: 'flex', flexDirection: 'column', color: '#ffffff', fontFamily: "'Inter', -apple-system, sans-serif" }}>
-      <div style={{ padding: '14px 24px', background: '#0f172a', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(14, 165, 233, 0.15)', border: '1px solid rgba(14, 165, 233, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Activity size={20} color="#38bdf8" />
-          </div>
-          <div>
-            <div style={{ fontSize: '16px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span>StreetIQ AI Vision Pipeline — Live Dashcam Evaluation</span>
-              <span style={{ fontSize: '11px', background: gpuServerOnline ? 'rgba(34, 197, 94, 0.2)' : 'rgba(234, 179, 8, 0.2)', color: gpuServerOnline ? '#4ade80' : '#facc15', border: `1px solid ${gpuServerOnline ? 'rgba(34, 197, 94, 0.4)' : 'rgba(234, 179, 8, 0.4)'}`, padding: '2px 8px', borderRadius: '12px', fontWeight: 700 }}>
-                {gpuServerOnline ? 'CUDA Acceleration Online' : 'Local TFJS Engine Active'}
-              </span>
-            </div>
-            <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-              Evaluating ASTM D6433 Distress, TwinLiteNet+ Drivable Area & ADAS Kinematic TTC on Real Dashcam Footage
-            </div>
-          </div>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#0a0f1d', display: 'flex', flexDirection: 'column', color: '#ffffff', fontFamily: "'Inter', -apple-system, sans-serif" }}>
+      <div style={{ padding: '12px 20px', background: '#0f172a', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Activity size={18} color="#38bdf8" />
+          <span style={{ fontSize: '15px', fontWeight: 800, color: '#f8fafc' }}>StreetIQ Vision</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#020617', padding: '4px', borderRadius: '8px', border: '1px solid #1e293b' }}>
+          {DEMO_VIDEOS.map((v) => {
+            const isSelected = selectedVideo.id === v.id;
+            return (
+              <button
+                key={v.id}
+                onClick={() => handleSelectVideo(v)}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  background: isSelected ? '#0284c7' : 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: isSelected ? '#ffffff' : '#94a3b8',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {v.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
-            style={{ background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255, 255, 255, 0.15)', color: soundEnabled ? '#38bdf8' : '#94a3b8', padding: '8px 12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600 }}
+            style={{ background: 'transparent', border: 'none', color: soundEnabled ? '#38bdf8' : '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '6px' }}
           >
-            {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-            <span>{soundEnabled ? 'Audio On' : 'Muted'}</span>
+            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
           </button>
           <button
             onClick={onClose}
-            style={{ background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#ffffff', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 600 }}
+            style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600 }}
           >
-            <X size={16} />
-            <span>Close Evaluation</span>
+            <X size={15} />
+            <span>Close</span>
           </button>
         </div>
-      </div>
-      <div style={{ padding: '12px 24px', background: '#1e293b', borderBottom: '1px solid #334155', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
-        {DEMO_VIDEOS.map((v) => {
-          const isSelected = selectedVideo.id === v.id;
-          return (
-            <button
-              key={v.id}
-              onClick={() => handleSelectVideo(v)}
-              style={{
-                textAlign: 'left',
-                padding: '12px 14px',
-                borderRadius: '10px',
-                background: isSelected ? 'rgba(14, 165, 233, 0.15)' : 'rgba(15, 23, 42, 0.6)',
-                border: `1.5px solid ${isSelected ? '#38bdf8' : '#334155'}`,
-                cursor: 'pointer',
-                color: '#ffffff',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '4px',
-                transition: 'all 0.18s ease'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '13px', fontWeight: 800, color: isSelected ? '#38bdf8' : '#f1f5f9' }}>{v.title}</span>
-                <span style={{ fontSize: '10px', background: isSelected ? '#0284c7' : '#334155', color: '#ffffff', padding: '2px 7px', borderRadius: '8px', fontWeight: 700 }}>
-                  {v.tag}
-                </span>
-              </div>
-              <div style={{ fontSize: '11px', color: '#94a3b8' }}>{v.subtitle}</div>
-            </button>
-          );
-        })}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: 'relative', background: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
         <video
@@ -439,54 +344,51 @@ export default function ScanDemoModal({ onClose }) {
           muted
           loop
           autoPlay
-          style={{ display: 'none' }}
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
-        <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        <canvas
+          ref={canvasRef}
+          width={1280}
+          height={720}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
+        />
         {fcwActive && (
-          <div style={{ position: 'absolute', top: 20, background: '#dc2626', color: '#ffffff', padding: '10px 24px', borderRadius: '8px', fontSize: '15px', fontWeight: 900, letterSpacing: '0.8px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 0 25px rgba(220, 38, 38, 0.85)' }}>
-            <AlertTriangle size={22} />
-            <span>FORWARD COLLISION WARNING — BRAKE</span>
+          <div style={{ position: 'absolute', top: 20, background: '#dc2626', color: '#ffffff', padding: '8px 20px', borderRadius: '6px', fontSize: '14px', fontWeight: 900, letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 0 20px rgba(220, 38, 38, 0.85)' }}>
+            <AlertTriangle size={18} />
+            <span>COLLISION WARNING — BRAKE</span>
           </div>
         )}
-        <div style={{ position: 'absolute', top: 18, left: 18, display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <div style={{ background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ color: '#94a3b8' }}>Live ASTM PCI:</span>
-            <strong style={{ color: pciScore >= 80 ? '#4ade80' : pciScore >= 65 ? '#facc15' : '#fb923c' }}>
-              {pciScore} / 100 ({pciRating})
-            </strong>
+        <div style={{ position: 'absolute', top: 16, left: 16, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div>
+            <span style={{ color: '#94a3b8' }}>PCI: </span>
+            <strong style={{ color: pciScore >= 80 ? '#4ade80' : pciScore >= 65 ? '#facc15' : '#fb923c' }}>{pciScore}/100 ({pciRating})</strong>
           </div>
-          <div style={{ background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ color: '#94a3b8' }}>Drivable Mask:</span>
-            <strong style={{ color: '#38bdf8' }}>TwinLiteNet+ Active</strong>
+          <div style={{ width: '1px', height: '12px', background: '#334155' }}></div>
+          <div>
+            <span style={{ color: '#94a3b8' }}>Hazards: </span>
+            <strong style={{ color: '#ffffff' }}>{hazardsCount}</strong>
           </div>
-          <div style={{ background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ color: '#94a3b8' }}>Target Vehicles:</span>
-            <strong style={{ color: '#34d399' }}>{activeVehiclesCount} Tracked</strong>
+          <div style={{ width: '1px', height: '12px', background: '#334155' }}></div>
+          <div>
+            <span style={{ color: '#94a3b8' }}>Vehicles: </span>
+            <strong style={{ color: '#ffffff' }}>{vehiclesCount}</strong>
           </div>
-          {fps > 0 && (
-            <div style={{ background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ color: '#94a3b8' }}>Inference:</span>
-              <strong style={{ color: '#e2e8f0' }}>{fps} FPS ({inferenceMs}ms)</strong>
-            </div>
-          )}
         </div>
-        <div style={{ position: 'absolute', bottom: 18, left: 18, right: 18, background: 'rgba(15, 23, 42, 0.90)', backdropFilter: 'blur(10px)', border: '1px solid #334155', borderRadius: '10px', padding: '12px 18px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ position: 'absolute', bottom: 16, left: 16, right: 16, background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(8px)', border: '1px solid #334155', borderRadius: '8px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button
             onClick={togglePlay}
-            style={{ width: '38px', height: '38px', borderRadius: '8px', background: '#0284c7', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            style={{ width: '32px', height: '32px', borderRadius: '6px', background: '#0284c7', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
           >
-            {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+            {isPlaying ? <Pause size={15} /> : <Play size={15} />}
           </button>
           <button
             onClick={handleRestart}
-            style={{ width: '38px', height: '38px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.1)', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            style={{ width: '32px', height: '32px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
           >
-            <RotateCcw size={16} />
+            <RotateCcw size={14} />
           </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#94a3b8', minWidth: '78px' }}>
-            <span>{formatTime(currentTime)}</span>
-            <span>/</span>
-            <span>{formatTime(duration)}</span>
+          <div style={{ fontSize: '11px', color: '#94a3b8', minWidth: '70px' }}>
+            <span>{formatTime(currentTime)}</span> / <span>{formatTime(duration)}</span>
           </div>
           <input
             type="range"
@@ -497,11 +399,6 @@ export default function ScanDemoModal({ onClose }) {
             onChange={handleSeek}
             style={{ flex: 1, cursor: 'pointer', accentColor: '#38bdf8' }}
           />
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px' }}>
-            <span style={{ color: '#94a3b8' }}>Defects Logged:</span>
-            <strong style={{ color: '#ef4444' }}>{hazardsCount.potholes} Potholes</strong>
-            <strong style={{ color: '#f59e0b' }}>{hazardsCount.cracks} Cracks</strong>
-          </div>
         </div>
       </div>
     </div>
