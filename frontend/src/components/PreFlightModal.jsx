@@ -31,7 +31,14 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
         try { pts = JSON.parse(pts); } catch { pts = null; }
       }
       const startPt = Array.isArray(pts) && pts.length > 0 ? pts[0] : null;
-      if (startPt && userLocation) {
+      if (task?.is_free_drive || !startPt) {
+        if (active) {
+          setChecks(c => ({
+            ...c,
+            startZone: { status: 'passed', label: '100m Start Zone Gate', detail: 'Drive & Random Scan: Roaming scan active across network' }
+          }));
+        }
+      } else if (startPt && userLocation) {
         const dist = haversineM(userLocation, startPt);
         if (dist !== null && dist > 100) {
           if (active) {

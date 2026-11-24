@@ -149,7 +149,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     };
   }, [initialStream, targetSpeed]);
   const isNearStretch = useCallback((loc) => {
-    if (!loc || !task?.route_points) return true;
+    if (!loc || !task?.route_points || task?.is_free_drive) return true;
     let pts = task.route_points;
     if (typeof pts === 'string') {
       try { pts = JSON.parse(pts); } catch { pts = null; }
@@ -160,7 +160,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       if (d <= 150) return true;
     }
     return false;
-  }, [task?.route_points]);
+  }, [task?.route_points, task?.is_free_drive]);
   const saveRealHazardToDb = useCallback(async (detection, imageBlob) => {
     if (!userLocation || !isNearStretch(userLocation)) return;
     try {
@@ -391,9 +391,16 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             <span>Exit Survey</span>
           </button>
           <div>
-            <div style={{ fontSize: '15px', fontWeight: 800 }}>{task?.road_name || task?.title || 'Active Road Survey'}</div>
+            <div style={{ fontSize: '15px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>{task?.road_name || task?.title || 'Active Road Survey'}</span>
+              {task?.is_free_drive && (
+                <span style={{ fontSize: '10px', background: '#0284c7', color: '#ffffff', padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
+                  Free Drive Mode
+                </span>
+              )}
+            </div>
             <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-              Target Speed: {targetSpeed} km/h • GPS Lock: {gpsAccuracy ? `${gpsAccuracy}m Accuracy` : 'Acquiring GPS...'}
+              {task?.is_free_drive ? 'Roaming Patrol • Automatic Geotagging & Defect Detection Everywhere' : `Target Speed: ${targetSpeed} km/h • GPS Lock: ${gpsAccuracy ? `${gpsAccuracy}m Accuracy` : 'Acquiring GPS...'}`}
             </div>
           </div>
         </div>
@@ -425,7 +432,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             <span>REDUCE SPEED — TARGET IS {targetSpeed} KM/H</span>
           </div>
         )}
-        {!isNearStretch(userLocation) && task?.route_points && (
+        {!isNearStretch(userLocation) && task?.route_points && !task?.is_free_drive && (
           <div style={{ position: 'absolute', top: speedAlert ? 60 : 16, background: 'rgba(234, 88, 12, 0.92)', color: '#ffffff', padding: '8px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
             <AlertTriangle size={18} />
             <span>OUTSIDE STRETCH VICINITY — DEFECT LOGGING PAUSED</span>

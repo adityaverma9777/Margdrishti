@@ -47,7 +47,21 @@ export default function SurveyorDashboard() {
   const prevCoordsRef = useRef(null);
   const taskStartPoint = getTaskStartPoint(selectedTask);
   const distanceToStartM = (userLocation && taskStartPoint) ? calculateDirectDistanceMeters(userLocation, taskStartPoint) : null;
-  const isInStartVicinity = distanceToStartM !== null ? distanceToStartM <= 100 : false;
+  const isInStartVicinity = selectedTask?.is_free_drive ? true : (distanceToStartM !== null ? distanceToStartM <= 100 : false);
+  const handleStartFreeDrive = () => {
+    const freeDriveTask = {
+      id: `free_drive_${Date.now()}`,
+      title: 'Drive & Random Scan (Roaming Patrol)',
+      road_name: 'Drive & Random Scan',
+      target_speed_kmh: 25,
+      is_free_drive: true,
+      route_points: null,
+      start_address: 'Any Road / Highway',
+      end_address: 'Continuous Patrol'
+    };
+    setSelectedTask(freeDriveTask);
+    setShowPreFlight(true);
+  };
   const loadSurveyData = async () => {
     setLoading(true);
     try {
@@ -134,13 +148,21 @@ export default function SurveyorDashboard() {
             Vehicle: <strong>{currentUser?.vehicleNumber || 'Unassigned Unit'}</strong>
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button
             className="gov-btn-secondary"
             onClick={() => setShowDefineModal(true)}
           >
             <Plus size={15} />
             <span>Define Stretch</span>
+          </button>
+          <button
+            className="gov-btn-secondary"
+            onClick={handleStartFreeDrive}
+            style={{ background: '#f0f9ff', borderColor: '#bae6fd', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Compass size={15} />
+            <span>Drive & Free Scan</span>
           </button>
           {isInStartVicinity || !selectedTask ? (
             <button
@@ -215,6 +237,25 @@ export default function SurveyorDashboard() {
         taskRoutePoints={selectedTask?.route_points || null}
         height={200}
       />
+      <div className="gov-card" style={{ padding: '16px 20px', marginBottom: '20px', marginTop: '20px', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff', border: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#22c55e', display: 'inline-block', boxShadow: '0 0 10px #22c55e' }}></span>
+            <span style={{ fontSize: '14px', fontWeight: 800, letterSpacing: '-0.2px' }}>Drive & Random Scan Mode (Roaming Patrol)</span>
+          </div>
+          <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px', maxWidth: '580px' }}>
+            Drive anywhere across the road network without a pre-assigned stretch. The vehicle AI camera continuously logs potholes, cracks, and surface distress with live GPS coordinates.
+          </p>
+        </div>
+        <button
+          onClick={handleStartFreeDrive}
+          className="gov-btn-primary"
+          style={{ background: '#0284c7', borderColor: '#0284c7', padding: '10px 18px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 14px rgba(2,132,199,0.4)' }}
+        >
+          <Play size={15} fill="#ffffff" />
+          <span>Turn On Drive & Scan</span>
+        </button>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: tasks.length > 0 ? 'minmax(320px, 1.2fr) minmax(360px, 1.8fr)' : '1fr', gap: '20px' }}>
         <div className="gov-card" style={{ overflow: 'hidden' }}>
           <div style={{ padding: '14px 18px', background: 'var(--gov-card-subtle)', borderBottom: '1px solid var(--gov-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -297,27 +338,29 @@ export default function SurveyorDashboard() {
               <div style={{ background: isInStartVicinity ? '#f0fdf4' : '#fef2f2', padding: '12px', borderRadius: 'var(--radius-sm)', border: isInStartVicinity ? '1px solid #bbf7d0' : '1px solid #fecaca' }}>
                 <div style={{ fontSize: '11px', fontWeight: 600, color: isInStartVicinity ? '#16a34a' : '#dc2626', textTransform: 'uppercase' }}>Inspection Status</div>
                 <div style={{ fontSize: '13px', fontWeight: 700, color: isInStartVicinity ? '#16a34a' : '#dc2626', marginTop: '4px' }}>
-                  {isInStartVicinity ? `In 100m Zone (${distanceToStartM !== null ? distanceToStartM + 'm' : 'Ready'})` : `Locked (${distanceToStartM !== null ? formatDistanceLabel(distanceToStartM) + ' away' : 'Outside 100m'})`}
+                  {selectedTask?.is_free_drive ? 'Free Drive Patrol (Ready to Scan)' : isInStartVicinity ? `In 100m Zone (${distanceToStartM !== null ? distanceToStartM + 'm' : 'Ready'})` : `Locked (${distanceToStartM !== null ? formatDistanceLabel(distanceToStartM) + ' away' : 'Outside 100m'})`}
                 </div>
               </div>
             </div>
             {isInStartVicinity ? (
               <div style={{ paddingTop: '8px', borderTop: '1px solid var(--gov-border)', display: 'flex', gap: '10px' }}>
-                <button
-                  className="gov-btn-secondary"
-                  style={{ flex: 1 }}
-                  onClick={() => setIsNavigatingToStart(true)}
-                >
-                  <Compass size={15} />
-                  <span>View Route Map</span>
-                </button>
+                {!selectedTask?.is_free_drive && (
+                  <button
+                    className="gov-btn-secondary"
+                    style={{ flex: 1 }}
+                    onClick={() => setIsNavigatingToStart(true)}
+                  >
+                    <Compass size={15} />
+                    <span>View Route Map</span>
+                  </button>
+                )}
                 <button
                   className="gov-btn-primary"
                   style={{ flex: 1.4, background: '#16a34a', borderColor: '#16a34a' }}
                   onClick={() => setShowPreFlight(true)}
                 >
                   <Play size={15} fill="#ffffff" />
-                  <span>Launch Survey (In Zone)</span>
+                  <span>{selectedTask?.is_free_drive ? 'Start Drive & Scan' : 'Launch Survey (In Zone)'}</span>
                 </button>
               </div>
             ) : (
