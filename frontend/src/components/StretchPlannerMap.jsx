@@ -1,15 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { Navigation, PenTool, RotateCcw, Check, MapPin, Route, Layers, Compass, Zap } from 'lucide-react';
+import { Route, PenTool, RotateCcw, Check, Zap } from 'lucide-react';
 import { STATE_COORDINATES, fetchCommuterRoutes, calculatePathDistance } from '../utils/routingEngine';
-
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
 
 const startIcon = L.divIcon({
   className: '',
@@ -35,9 +28,14 @@ const waypointIcon = L.divIcon({
 function MapViewController({ center, zoom }) {
   const map = useMap();
   useEffect(() => {
+    map.invalidateSize();
     if (center) {
       map.setView(center, zoom, { animate: true, duration: 0.8 });
     }
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+    return () => clearTimeout(timer);
   }, [center, zoom, map]);
   return null;
 }
@@ -234,7 +232,7 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
         </div>
       </div>
 
-      <div style={{ position: 'relative', width: '100%', height: '380px', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--gov-border)' }}>
+      <div style={{ position: 'relative', width: '100%', height: '380px', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--gov-border)', background: '#e2e8f0' }}>
         <MapContainer
           center={mapCenter}
           zoom={mapZoom}
@@ -247,12 +245,14 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
           {whiteRoadsActive ? (
             <TileLayer
               url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              subdomains={['a', 'b', 'c', 'd']}
               attribution='&copy; OpenStreetMap contributors &copy; CARTO'
             />
           ) : (
             <TileLayer
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution='&copy; OpenStreetMap contributors'
+              url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+              subdomains={['a', 'b', 'c', 'd']}
+              attribution='&copy; OpenStreetMap contributors &copy; CARTO'
             />
           )}
 
