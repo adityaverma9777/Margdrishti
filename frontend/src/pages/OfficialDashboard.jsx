@@ -1,135 +1,153 @@
-import React, { useState, useEffect } from 'react';
-import { Car, Plus, Send, RefreshCw, Printer, ShieldCheck, Route, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Car, Plus, Send, RefreshCw, Printer, ShieldCheck, AlertCircle, History, MessageSquare, Check, X, CheckCircle, FileText } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../supabaseClient';
+import {
+  fetchFleetVehicles,
+  registerVehicle,
+  removeVehicle,
+  fetchSurveyTasks,
+  dispatchTask,
+  markReplyAsRead,
+  fetchDefectsLedger,
+  submitDefectAction,
+  fetchDefectAuditTrail,
+  fetchOfficialSummary
+} from '../services/officialApi';
 
 export default function OfficialDashboard() {
   const { currentUser } = useAuth();
-  const [vehicles, setVehicles] = useState(() => {
-    try {
-      const saved = localStorage.getItem('streetiq_gov_vehicles');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [selectedVehicle, setSelectedVehicle] = useState(null);
-  const [defects, setDefects] = useState([]);
-  const [loadingDefects, setLoadingDefects] = useState(true);
   const [activeTab, setActiveTab] = useState('fleet');
+  const [vehicles, setVehicles] = useState([]);
+  const [selectedVehicle, setSelectedVehicle] = useState(null);
+  const [vehicleTasks, setVehicleTasks] = useState([]);
+  const [defects, setDefects] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+
   const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [selectedDefectForAudit, setSelectedDefectForAudit] = useState(null);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
+
   const [newVehNumber, setNewVehNumber] = useState('');
   const [newVehModel, setNewVehModel] = useState('');
   const [newVehDriver, setNewVehDriver] = useState('');
   const [newVehCrew, setNewVehCrew] = useState('');
+  const [newVehJurisdiction, setNewVehJurisdiction] = useState('Central Highway Division');
+
   const [taskStretchName, setTaskStretchName] = useState('');
   const [taskNotes, setTaskNotes] = useState('');
   const [taskSpeed, setTaskSpeed] = useState('25');
+  const [taskPriority, setTaskPriority] = useState('routine');
 
-  const fetchDatabaseData = async () => {
-    setLoadingDefects(true);
-    try {
-      const { data: dbVehicles } = await supabase
-        .from('survey_vehicles')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (dbVehicles && dbVehicles.length > 0) {
-        setVehicles(dbVehicles);
-        localStorage.setItem('streetiq_gov_vehicles', JSON.stringify(dbVehicles));
-        if (!selectedVehicle) setSelectedVehicle(dbVehicles[0]);
-      } else if (vehicles.length > 0 && !selectedVehicle) {
-        setSelectedVehicle(vehicles[0]);
-      }
-    } catch {}
-
-    try {
-      const { data: dbHazards } = await supabase
-        .from('hazards')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (dbHazards && dbHazards.length > 0) {
-        const mapped = dbHazards.map(h => ({
-          id: h.id,
-          defectType: h.type === 'pothole' ? 'Pothole (ASTM 13)' : h.type === 'crack' ? 'Road Crack (ASTM 1/10)' : `${h.type} (Distress)`,
-          severity: h.severity_score || 4,
-          speedKmh: h.speed_kmh || null,
-          location: h.location ? `Geo: ${JSON.stringify(h.location)}` : 'Survey Segment',
-          time: new Date(h.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
-          status: h.status === 'verified' ? 'fit' : h.status === 'under_review' ? 'in_validation' : h.status === 'rejected' ? 'rescan_required' : 'pending_review',
-          confidence: h.confidence_score || 0.88,
-          source: h.source || 'Vehicle Scan'
-        }));
-        setDefects(mapped);
-      } else {
-        setDefects([]);
-      }
-    } catch {}
-    setLoadingDefects(false);
-  };
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    const [vehList, defectList, sumData] = await Promise.all([
+      fetchFleetVehicles(),
+      fetchDefectsLedger(),
+      fetchOfficialSummary()
+    ]);
+    setVehicles(vehList);
+    setDefects(defectList);
+    setSummary(sumData);
+    if (vehList.length > 0) {
+      const active = selectedVehicle ? vehList.find(v => v.id === selectedVehicle.id) || vehList[0] : vehList[0];
+      setSelectedVehicle(active);
+      const tasks = await fetchSurveyTasks(active.id);
+      setVehicleTasks(tasks);
+    } else {
+      setSelectedVehicle(null);
+      setVehicleTasks([]);
+    }
+    setLoading(false);
+  }, [selectedVehicle]);
 
   useEffect(() => {
-    fetchDatabaseData();
+    loadData();
   }, []);
+
+  const handleSelectVehicle = async (veh) => {
+    setSelectedVehicle(veh);
+    const tasks = await fetchSurveyTasks(veh.id);
+    setVehicleTasks(tasks);
+  };
 
   const handleAddVehicle = async (e) => {
     e.preventDefault();
     if (!newVehNumber) return;
-    const newVeh = {
-      id: `veh_${Date.now()}`,
-      number: newVehNumber.toUpperCase(),
-      model: newVehModel || 'Inspection Vehicle',
-      driver: newVehDriver || 'Driver Assigned',
-      crew: newVehCrew ? newVehCrew.split(',').map(s => s.trim()) : [newVehDriver || 'Driver'],
-      status: 'idle',
-      totalKm: 0,
-      defectsLogged: 0,
-      hasUnreadReply: false,
-      created_at: new Date().toISOString()
-    };
-    try {
-      await supabase.from('survey_vehicles').insert([newVeh]);
-    } catch {}
-    const updated = [newVeh, ...vehicles];
-    setVehicles(updated);
-    setSelectedVehicle(newVeh);
-    localStorage.setItem('streetiq_gov_vehicles', JSON.stringify(updated));
-    setShowAddVehicleModal(false);
-    setNewVehNumber('');
-    setNewVehModel('');
-    setNewVehDriver('');
-    setNewVehCrew('');
+    const crewList = newVehCrew ? newVehCrew.split(',').map(s => s.trim()) : [newVehDriver || 'Driver Assigned'];
+    const created = await registerVehicle({
+      vehicle_number: newVehNumber.toUpperCase(),
+      model_name: newVehModel || 'Inspection Unit',
+      driver_name: newVehDriver || 'Driver Assigned',
+      crew_members: crewList,
+      jurisdiction_name: newVehJurisdiction || 'Central Highway Division'
+    });
+    if (created) {
+      setNewVehNumber('');
+      setNewVehModel('');
+      setNewVehDriver('');
+      setNewVehCrew('');
+      setShowAddVehicleModal(false);
+      await loadData();
+    }
   };
 
-  const handleUpdateDefectStatus = async (defectId, newStatus) => {
-    const dbStatus = newStatus === 'fit' ? 'verified' : newStatus === 'rescan_required' ? 'rejected' : 'under_review';
-    setDefects(defects.map(d => d.id === defectId ? { ...d, status: newStatus } : d));
-    try {
-      await supabase.from('hazards').update({ status: dbStatus, updated_at: new Date().toISOString() }).eq('id', defectId);
-    } catch {}
+  const handleDeleteVehicle = async (vehId) => {
+    if (!window.confirm('Are you sure you want to decommission this vehicle?')) return;
+    await removeVehicle(vehId);
+    await loadData();
   };
 
   const handleAssignTask = async (e) => {
     e.preventDefault();
     if (!taskStretchName || !selectedVehicle) return;
     const newTask = {
-      id: `task_${Date.now()}`,
       title: taskStretchName,
       road_name: taskStretchName,
       assigned_vehicle_id: selectedVehicle.id,
       target_speed_kmh: Number(taskSpeed) || 25,
       official_notes: taskNotes,
-      status: 'pending',
-      created_at: new Date().toISOString()
+      priority: taskPriority,
+      start_address: 'Assigned Start Point',
+      end_address: 'Assigned End Point'
     };
-    try {
-      await supabase.from('survey_tasks').insert([newTask]);
-    } catch {}
-    alert(`Survey stretch assigned to ${selectedVehicle.number}.`);
+    await dispatchTask(newTask);
     setShowAssignModal(false);
     setTaskStretchName('');
     setTaskNotes('');
+    const tasks = await fetchSurveyTasks(selectedVehicle.id);
+    setVehicleTasks(tasks);
+  };
+
+  const handleMarkReplyRead = async (taskId) => {
+    await markReplyAsRead(taskId, selectedVehicle?.id);
+    if (selectedVehicle) {
+      const tasks = await fetchSurveyTasks(selectedVehicle.id);
+      setVehicleTasks(tasks);
+      const vehList = await fetchFleetVehicles();
+      setVehicles(vehList);
+    }
+  };
+
+  const handleDefectAction = async (defectId, action) => {
+    const officialName = currentUser?.name || 'Executive Officer';
+    await submitDefectAction(defectId, action, officialName, `Reviewed as ${action.toUpperCase()}`);
+    const [updatedDefects, sumData] = await Promise.all([
+      fetchDefectsLedger(),
+      fetchOfficialSummary()
+    ]);
+    setDefects(updatedDefects);
+    setSummary(sumData);
+  };
+
+  const handleOpenAuditModal = async (defect) => {
+    setSelectedDefectForAudit(defect);
+    setLoadingAudit(true);
+    const logs = await fetchDefectAuditTrail(defect.id);
+    setAuditLogs(logs);
+    setLoadingAudit(false);
   };
 
   return (
@@ -147,24 +165,15 @@ export default function OfficialDashboard() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            className="gov-btn-secondary"
-            onClick={fetchDatabaseData}
-          >
+          <button className="gov-btn-secondary" onClick={loadData}>
             <RefreshCw size={14} />
             <span>Sync</span>
           </button>
-          <button
-            className="gov-btn-secondary"
-            onClick={() => window.print()}
-          >
+          <button className="gov-btn-secondary" onClick={() => window.print()}>
             <Printer size={14} />
             <span>Print Report</span>
           </button>
-          <button
-            className="gov-btn-primary"
-            onClick={() => setShowAddVehicleModal(true)}
-          >
+          <button className="gov-btn-primary" onClick={() => setShowAddVehicleModal(true)}>
             <Plus size={14} />
             <span>Add Vehicle</span>
           </button>
@@ -177,7 +186,7 @@ export default function OfficialDashboard() {
             Survey Vehicles
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-navy)', marginTop: '6px' }}>
-            {vehicles.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Units</span>
+            {summary ? summary.fleet.total_vehicles : vehicles.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Units</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
             Registered in fleet
@@ -189,23 +198,23 @@ export default function OfficialDashboard() {
             Live Defects Logged
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-red)', marginTop: '6px' }}>
-            {defects.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Items</span>
+            {summary ? summary.defects.total : defects.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Items</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
-            {defects.filter(d => d.status === 'pending_review' || d.status === 'in_validation').length} Pending Review
+            {summary ? summary.defects.pending_review : 0} Pending Verification
           </div>
         </div>
 
         <div className="gov-card" style={{ padding: '18px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
-            Boundary Check
+            Validation Progress
           </div>
           <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-green)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <ShieldCheck size={20} color="var(--gov-green)" />
-            <span>Zone Guard Active</span>
+            <span>{summary ? summary.defects.fit : 0} Verified Fit</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
-            Geofence tracking active
+            {summary ? summary.defects.in_validation : 0} In Field Validation
           </div>
         </div>
       </div>
@@ -224,7 +233,7 @@ export default function OfficialDashboard() {
             cursor: 'pointer'
           }}
         >
-          Survey Vehicles ({vehicles.length})
+          Fleet & Task Dispatch ({vehicles.length})
         </button>
         <button
           onClick={() => setActiveTab('defects')}
@@ -241,10 +250,25 @@ export default function OfficialDashboard() {
         >
           Defect Ledger ({defects.length})
         </button>
+        <button
+          onClick={() => setActiveTab('compliance')}
+          style={{
+            padding: '10px 16px',
+            border: 'none',
+            borderBottom: activeTab === 'compliance' ? '3px solid var(--gov-blue)' : '3px solid transparent',
+            background: 'transparent',
+            fontWeight: 700,
+            fontSize: '13px',
+            color: activeTab === 'compliance' ? 'var(--gov-navy)' : 'var(--gov-text-muted)',
+            cursor: 'pointer'
+          }}
+        >
+          Compliance Report
+        </button>
       </div>
 
       {activeTab === 'fleet' && (
-        <div style={{ display: 'grid', gridTemplateColumns: vehicles.length > 0 ? 'minmax(300px, 1.2fr) minmax(340px, 1.8fr)' : '1fr', gap: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: vehicles.length > 0 ? 'minmax(300px, 1.1fr) minmax(360px, 1.9fr)' : '1fr', gap: '20px' }}>
           <div className="gov-card" style={{ overflow: 'hidden' }}>
             <div style={{ padding: '14px 18px', background: 'var(--gov-card-subtle)', borderBottom: '1px solid var(--gov-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-navy)' }}>
@@ -260,7 +284,11 @@ export default function OfficialDashboard() {
               </button>
             </div>
 
-            {vehicles.length === 0 ? (
+            {loading ? (
+              <div style={{ padding: '36px', textAlign: 'center', color: 'var(--gov-text-muted)', fontSize: '13px' }}>
+                Loading fleet data...
+              </div>
+            ) : vehicles.length === 0 ? (
               <div style={{ padding: '36px 20px', textAlign: 'center' }}>
                 <Car size={32} color="var(--gov-text-muted)" style={{ margin: '0 auto 10px' }} />
                 <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-text-primary)' }}>No Survey Vehicles Registered</div>
@@ -283,7 +311,7 @@ export default function OfficialDashboard() {
                   return (
                     <div
                       key={v.id}
-                      onClick={() => setSelectedVehicle(v)}
+                      onClick={() => handleSelectVehicle(v)}
                       style={{
                         padding: '14px 18px',
                         borderBottom: '1px solid var(--gov-border)',
@@ -294,13 +322,18 @@ export default function OfficialDashboard() {
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                          <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>{v.number}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>{v.vehicle_number}</span>
+                            {v.has_unread_reply && (
+                              <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#dc2626' }} title="Unread surveyor reply" />
+                            )}
+                          </div>
                           <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
-                            {v.model} • Driver: {v.driver}
+                            {v.model_name} • Driver: {v.driver_name}
                           </div>
                         </div>
-                        <span className={`gov-badge ${v.status === 'surveying' ? 'gov-badge-green' : 'gov-badge-neutral'}`} style={{ fontSize: '10px' }}>
-                          {v.status === 'surveying' ? 'Active' : 'Idle'}
+                        <span className={`gov-badge ${v.status === 'in_survey' ? 'gov-badge-green' : 'gov-badge-neutral'}`} style={{ fontSize: '10px' }}>
+                          {v.status === 'in_survey' ? 'Surveying' : 'Idle'}
                         </span>
                       </div>
                     </div>
@@ -311,31 +344,109 @@ export default function OfficialDashboard() {
           </div>
 
           {selectedVehicle && (
-            <div className="gov-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--gov-border)', paddingBottom: '12px' }}>
+            <div className="gov-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--gov-border)', paddingBottom: '14px' }}>
                 <div>
-                  <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)' }}>
-                    Vehicle {selectedVehicle.number}
+                  <div style={{ fontSize: '17px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                    Vehicle {selectedVehicle.vehicle_number}
                   </div>
                   <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
-                    {selectedVehicle.model} • Driver: {selectedVehicle.driver}
+                    {selectedVehicle.model_name} • Driver: {selectedVehicle.driver_name} • Jurisdiction: {selectedVehicle.jurisdiction_name || 'General Division'}
                   </div>
                 </div>
-                <button
-                  className="gov-btn-primary"
-                  onClick={() => setShowAssignModal(true)}
-                  style={{ padding: '8px 14px', fontSize: '12px' }}
-                >
-                  <Send size={13} />
-                  <span>Dispatch Task</span>
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    className="gov-btn-primary"
+                    onClick={() => setShowAssignModal(true)}
+                    style={{ padding: '7px 14px', fontSize: '12px' }}
+                  >
+                    <Send size={13} />
+                    <span>Dispatch Stretch</span>
+                  </button>
+                  <button
+                    className="gov-btn-secondary"
+                    onClick={() => handleDeleteVehicle(selectedVehicle.id)}
+                    style={{ padding: '7px 10px', fontSize: '12px', color: 'var(--gov-red)' }}
+                    title="Decommission vehicle"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
               </div>
 
-              <div style={{ background: 'var(--gov-card-subtle)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Crew Members</div>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '3px' }}>
-                  {Array.isArray(selectedVehicle.crew) ? selectedVehicle.crew.join(', ') : selectedVehicle.driver}
+              <div style={{ background: 'var(--gov-card-subtle)', padding: '12px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Crew Members</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
+                    {Array.isArray(selectedVehicle.crew_members) ? selectedVehicle.crew_members.join(', ') : selectedVehicle.driver_name}
+                  </div>
                 </div>
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Distance Logged</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
+                    {Number(selectedVehicle.total_distance_km || 0).toFixed(1)} KM
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Defects Logged</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
+                    {selectedVehicle.defects_logged || 0} Points
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '10px' }}>
+                  Dispatched Tasks ({vehicleTasks.length})
+                </div>
+
+                {vehicleTasks.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+                    <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)' }}>No survey tasks dispatched to this unit yet.</div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {vehicleTasks.map((t) => (
+                      <div key={t.id} style={{ background: '#ffffff', border: '1px solid var(--gov-border)', borderRadius: 'var(--radius-sm)', padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>{t.road_name || t.title}</span>
+                          <span className={`gov-badge ${t.status === 'completed' ? 'gov-badge-green' : t.status === 'in_progress' ? 'gov-badge-blue' : 'gov-badge-neutral'}`} style={{ fontSize: '11px' }}>
+                            {t.status}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
+                          Target Speed: {t.target_speed_kmh} km/h • Priority: {t.priority || 'routine'}
+                        </div>
+                        {t.official_notes && (
+                          <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px', fontStyle: 'italic' }}>
+                            Notes: "{t.official_notes}"
+                          </div>
+                        )}
+                        {t.surveyor_reply && (
+                          <div style={{ marginTop: '8px', padding: '8px 10px', background: t.reply_unread_by_official ? '#fef2f2' : '#f8fafc', border: `1px solid ${t.reply_unread_by_official ? '#fecaca' : '#e2e8f0'}`, borderRadius: '4px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '11px', fontWeight: 700, color: t.reply_unread_by_official ? '#dc2626' : '#64748b' }}>
+                                Crew Feedback {t.reply_unread_by_official && '(NEW)'}:
+                              </span>
+                              {t.reply_unread_by_official && (
+                                <button
+                                  onClick={() => handleMarkReplyRead(t.id)}
+                                  style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                                >
+                                  <Check size={12} />
+                                  <span>Mark Read</span>
+                                </button>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#0f172a', marginTop: '2px' }}>
+                              {t.surveyor_reply}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -348,9 +459,12 @@ export default function OfficialDashboard() {
             <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-navy)' }}>
               Road Defect Ledger ({defects.length})
             </span>
+            <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)' }}>
+              Real PostGIS Distresses & Engineering Action Matrix
+            </div>
           </div>
 
-          {loadingDefects ? (
+          {loading ? (
             <div style={{ padding: '32px', textAlign: 'center', color: 'var(--gov-text-muted)', fontSize: '13px' }}>
               Loading defect records...
             </div>
@@ -363,67 +477,178 @@ export default function OfficialDashboard() {
               </p>
             </div>
           ) : (
-            <table className="gov-table">
-              <thead>
-                <tr>
-                  <th>Defect Type</th>
-                  <th>Location & Time</th>
-                  <th>Severity</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {defects.map((d) => (
-                  <tr key={d.id}>
-                    <td>
-                      <div style={{ fontWeight: 700 }}>{d.defectType}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)' }}>Confidence: {Math.round(d.confidence * 100)}%</div>
-                    </td>
-                    <td>
-                      <div style={{ fontSize: '12px' }}>{d.location}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)' }}>{d.time}</div>
-                    </td>
-                    <td>
-                      <span style={{ fontWeight: 700, color: d.severity >= 4 ? 'var(--gov-red)' : 'var(--gov-amber)' }}>{d.severity}/5</span>
-                    </td>
-                    <td>
-                      <span className={`gov-badge ${d.status === 'fit' ? 'gov-badge-green' : d.status === 'in_validation' ? 'gov-badge-amber' : 'gov-badge-neutral'}`}>
-                        {d.status === 'fit' ? 'Fit' : d.status === 'in_validation' ? 'Validate' : 'Pending'}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '4px' }}>
-                        <button
-                          onClick={() => handleUpdateDefectStatus(d.id, 'fit')}
-                          className="gov-btn-secondary"
-                          style={{ padding: '3px 7px', fontSize: '11px', color: 'var(--gov-green)' }}
-                        >
-                          Mark Fit
-                        </button>
-                        <button
-                          onClick={() => handleUpdateDefectStatus(d.id, 'in_validation')}
-                          className="gov-btn-secondary"
-                          style={{ padding: '3px 7px', fontSize: '11px', color: 'var(--gov-blue)' }}
-                        >
-                          Validate
-                        </button>
-                      </div>
-                    </td>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="gov-table" style={{ width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>Defect Classification</th>
+                    <th>Coordinates & Speed</th>
+                    <th>Severity</th>
+                    <th>Review Status</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {defects.map((d) => {
+                    const defectLabel = d.type === 'pothole' ? 'Pothole (ASTM 13)' : d.type === 'crack' ? 'Road Crack (ASTM 1/10)' : `${d.type} (Distress)`;
+                    const actionStatus = d.action_status || (d.status === 'verified' ? 'fit' : d.status === 'under_review' ? 'in_validation' : d.status === 'rejected' ? 'rescan_required' : 'pending_review');
+                    const badgeClass = actionStatus === 'fit' ? 'gov-badge-green' : actionStatus === 'in_validation' ? 'gov-badge-blue' : actionStatus === 'rescan_required' ? 'gov-badge-red' : 'gov-badge-neutral';
+                    return (
+                      <tr key={d.id}>
+                        <td>
+                          <div style={{ fontWeight: 800, color: 'var(--gov-text-primary)' }}>{defectLabel}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)' }}>
+                            Confidence: {Math.round((d.confidence_score || 0.85) * 100)}% • Source: {d.source || 'Vehicle Camera'}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ fontSize: '12px', fontFamily: 'monospace' }}>
+                            {d.location_geojson ? 'PostGIS Point Locked' : 'Survey Stretch'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)' }}>
+                            {d.speed_kmh ? `${d.speed_kmh} km/h` : 'Captured In Survey'}
+                          </div>
+                        </td>
+                        <td>
+                          <span style={{ fontWeight: 800, color: (d.severity_score || 4) >= 4 ? 'var(--gov-red)' : 'var(--gov-amber)' }}>
+                            {d.severity_score || 4}/5
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`gov-badge ${badgeClass}`} style={{ textTransform: 'capitalize' }}>
+                            {actionStatus.replace('_', ' ')}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <div style={{ display: 'inline-flex', gap: '4px' }}>
+                            <button
+                              onClick={() => handleDefectAction(d.id, 'fit')}
+                              className="gov-btn-secondary"
+                              style={{ padding: '3px 7px', fontSize: '11px', color: 'var(--gov-green)' }}
+                              title="Mark Fit"
+                            >
+                              Fit
+                            </button>
+                            <button
+                              onClick={() => handleDefectAction(d.id, 'validate')}
+                              className="gov-btn-secondary"
+                              style={{ padding: '3px 7px', fontSize: '11px', color: 'var(--gov-blue)' }}
+                              title="Send for Field Validation"
+                            >
+                              Validate
+                            </button>
+                            <button
+                              onClick={() => handleDefectAction(d.id, 'rescan')}
+                              className="gov-btn-secondary"
+                              style={{ padding: '3px 7px', fontSize: '11px', color: 'var(--gov-red)' }}
+                              title="Requires Rescan"
+                            >
+                              Rescan
+                            </button>
+                            <button
+                              onClick={() => handleDefectAction(d.id, 'fixed')}
+                              className="gov-btn-secondary"
+                              style={{ padding: '3px 7px', fontSize: '11px', color: 'var(--gov-green)' }}
+                              title="Mark Fixed"
+                            >
+                              Fixed
+                            </button>
+                            <button
+                              onClick={() => handleOpenAuditModal(d)}
+                              className="gov-btn-secondary"
+                              style={{ padding: '3px 6px', fontSize: '11px' }}
+                              title="View Audit Trail"
+                            >
+                              <History size={12} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
+        </div>
+      )}
+
+      {activeTab === 'compliance' && (
+        <div className="gov-card" style={{ padding: '24px' }}>
+          <div style={{ borderBottom: '2px solid var(--gov-navy)', paddingBottom: '14px', marginBottom: '18px' }}>
+            <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+              National Road Network Pavement Quality Audit & Compliance Dossier
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
+              Standard ASTM D6433 Pavement Condition Index (PCI) Engineering Audit Summary
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '22px' }}>
+            <div style={{ padding: '14px', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)', fontWeight: 600 }}>NETWORK PCI SCORE</div>
+              <div style={{ fontSize: '26px', fontWeight: 800, color: 'var(--gov-blue)', marginTop: '4px' }}>
+                {summary ? summary.fleet.avg_network_pci : 100} / 100
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>Standard ASTM D6433</div>
+            </div>
+
+            <div style={{ padding: '14px', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)', fontWeight: 600 }}>TOTAL DISTANCE AUDITED</div>
+              <div style={{ fontSize: '26px', fontWeight: 800, color: 'var(--gov-navy)', marginTop: '4px' }}>
+                {summary ? summary.fleet.total_km_surveyed : 0} KM
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>Inspected Stretches</div>
+            </div>
+
+            <div style={{ padding: '14px', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)', fontWeight: 600 }}>TOTAL DISTRESS POINTS</div>
+              <div style={{ fontSize: '26px', fontWeight: 800, color: 'var(--gov-red)', marginTop: '4px' }}>
+                {summary ? summary.defects.total : defects.length}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
+                {summary ? summary.defects.potholes : 0} Potholes • {summary ? summary.defects.cracks : 0} Cracks
+              </div>
+            </div>
+          </div>
+
+          <div style={{ border: '1px solid var(--gov-border)', borderRadius: 'var(--radius-sm)', padding: '16px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '12px' }}>
+              Defect Validation State Breakdown
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
+              <div style={{ padding: '10px', background: '#f0fdf4', borderRadius: '4px', border: '1px solid #bbf7d0' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#16a34a' }}>VERIFIED FIT</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#16a34a', marginTop: '2px' }}>{summary ? summary.defects.fit : 0}</div>
+              </div>
+              <div style={{ padding: '10px', background: '#eff6ff', borderRadius: '4px', border: '1px solid #bfdbfe' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#2563eb' }}>IN VALIDATION</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#2563eb', marginTop: '2px' }}>{summary ? summary.defects.in_validation : 0}</div>
+              </div>
+              <div style={{ padding: '10px', background: '#fef2f2', borderRadius: '4px', border: '1px solid #fecaca' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#dc2626' }}>RESCAN REQUIRED</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#dc2626', marginTop: '2px' }}>{summary ? summary.defects.rescan_required : 0}</div>
+              </div>
+              <div style={{ padding: '10px', background: '#f8fafc', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>PENDING REVIEW</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#475569', marginTop: '2px' }}>{summary ? summary.defects.pending_review : 0}</div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
       {showAddVehicleModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
           <div className="gov-card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '14px' }}>
-              Register Survey Vehicle
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                Register Survey Vehicle
+              </h2>
+              <button onClick={() => setShowAddVehicleModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
             <form onSubmit={handleAddVehicle} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
                 <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Registration Number</label>
@@ -448,38 +673,41 @@ export default function OfficialDashboard() {
                 />
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Driver Name</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Primary Driver</label>
                 <input
                   type="text"
                   className="gov-input"
-                  placeholder="e.g. Rajesh Sharma"
+                  placeholder="e.g. Rajesh Kumar"
                   value={newVehDriver}
                   onChange={(e) => setNewVehDriver(e.target.value)}
                 />
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Crew Personnel (comma separated)</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Crew Members (Comma separated)</label>
                 <input
                   type="text"
                   className="gov-input"
-                  placeholder="e.g. Rajesh Sharma, Bipul Das"
+                  placeholder="e.g. A. Sharma (Surveyor), R. Verma (Operator)"
                   value={newVehCrew}
                   onChange={(e) => setNewVehCrew(e.target.value)}
                 />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <button
-                  type="button"
-                  className="gov-btn-secondary"
-                  onClick={() => setShowAddVehicleModal(false)}
-                >
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Jurisdiction Division</label>
+                <input
+                  type="text"
+                  className="gov-input"
+                  placeholder="e.g. North Zone PWD"
+                  value={newVehJurisdiction}
+                  onChange={(e) => setNewVehJurisdiction(e.target.value)}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
+                <button type="button" className="gov-btn-secondary" onClick={() => setShowAddVehicleModal(false)}>
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="gov-btn-primary"
-                >
-                  Register Vehicle
+                <button type="submit" className="gov-btn-primary">
+                  Save Vehicle
                 </button>
               </div>
             </form>
@@ -490,59 +718,120 @@ export default function OfficialDashboard() {
       {showAssignModal && selectedVehicle && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
           <div className="gov-card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '14px' }}>
-              Dispatch Road Stretch to {selectedVehicle.number}
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                Dispatch Task to {selectedVehicle.vehicle_number}
+              </h2>
+              <button onClick={() => setShowAssignModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
             <form onSubmit={handleAssignTask} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Road Stretch Name</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Road Stretch / Highway Name</label>
                 <input
                   type="text"
                   className="gov-input"
-                  placeholder="e.g. Ring Road Junction A to B"
+                  placeholder="e.g. NH-27 Corridor KM 14-28"
                   value={taskStretchName}
                   onChange={(e) => setTaskStretchName(e.target.value)}
                   required
                 />
               </div>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Target Speed (km/h)</label>
-                <select
-                  value={taskSpeed}
-                  onChange={(e) => setTaskSpeed(e.target.value)}
-                  className="gov-input"
-                >
-                  <option value="20">20 km/h (Urban / Arterial)</option>
-                  <option value="25">25 km/h (State Highway)</option>
-                  <option value="30">30 km/h (Bypass Corridor)</option>
-                </select>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Target Speed (km/h)</label>
+                  <input
+                    type="number"
+                    className="gov-input"
+                    value={taskSpeed}
+                    onChange={(e) => setTaskSpeed(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Priority</label>
+                  <select
+                    className="gov-input"
+                    value={taskPriority}
+                    onChange={(e) => setTaskPriority(e.target.value)}
+                  >
+                    <option value="routine">Routine</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="post_monsoon">Post-Monsoon</option>
+                  </select>
+                </div>
               </div>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Field Directives</label>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Official Instructions / Notes</label>
                 <textarea
                   className="gov-input"
-                  rows={2}
-                  placeholder="Optional field notes..."
+                  rows={3}
+                  placeholder="Specific potholes or shoulder drop-offs to verify..."
                   value={taskNotes}
                   onChange={(e) => setTaskNotes(e.target.value)}
                 />
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <button
-                  type="button"
-                  className="gov-btn-secondary"
-                  onClick={() => setShowAssignModal(false)}
-                >
+                <button type="button" className="gov-btn-secondary" onClick={() => setShowAssignModal(false)}>
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="gov-btn-primary"
-                >
-                  Dispatch Stretch
+                <button type="submit" className="gov-btn-primary">
+                  Dispatch Survey
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {selectedDefectForAudit && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+          <div className="gov-card" style={{ width: '100%', maxWidth: '480px', padding: '22px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                Defect Audit History
+              </h2>
+              <button onClick={() => setSelectedDefectForAudit(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            {loadingAudit ? (
+              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--gov-text-muted)', fontSize: '13px' }}>
+                Loading audit trail...
+              </div>
+            ) : auditLogs.length === 0 ? (
+              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--gov-text-muted)', fontSize: '13px' }}>
+                No past audit actions recorded for this defect yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '320px', overflowY: 'auto' }}>
+                {auditLogs.map((log) => (
+                  <div key={log.id} style={{ padding: '10px 12px', background: 'var(--gov-card-subtle)', borderRadius: '4px', border: '1px solid var(--gov-border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--gov-navy)', textTransform: 'uppercase' }}>
+                        Action: {log.action_type}
+                      </span>
+                      <span style={{ fontSize: '11px', color: 'var(--gov-text-muted)' }}>
+                        {new Date(log.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--gov-text-primary)', marginTop: '3px' }}>
+                      Officer: <strong>{log.official_name || 'Executive Engineer'}</strong>
+                    </div>
+                    {log.official_remarks && (
+                      <div style={{ fontSize: '11px', color: 'var(--gov-text-secondary)', marginTop: '2px', fontStyle: 'italic' }}>
+                        "{log.official_remarks}"
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
+              <button className="gov-btn-secondary" onClick={() => setSelectedDefectForAudit(null)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
