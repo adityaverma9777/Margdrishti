@@ -6,6 +6,7 @@ import PreFlightModal from '../components/PreFlightModal';
 import SurveyCockpit from '../components/SurveyCockpit';
 import SurveyorTrackMap from '../components/SurveyorTrackMap';
 import TurnByTurnNavModal from '../components/TurnByTurnNavModal';
+import StretchDistanceCheckerModal from '../components/StretchDistanceCheckerModal';
 function getTaskStartPoint(task) {
   if (!task) return null;
   let pts = task.route_points;
@@ -40,10 +41,6 @@ export default function SurveyorDashboard() {
   const [isNavigatingToStart, setIsNavigatingToStart] = useState(false);
   const [isSurveyingActive, setIsSurveyingActive] = useState(false);
   const [surveyStream, setSurveyStream] = useState(null);
-  const [newRoadName, setNewRoadName] = useState('');
-  const [startPoint, setStartPoint] = useState('');
-  const [endPoint, setEndPoint] = useState('');
-  const [targetSpeed, setTargetSpeed] = useState('25');
   const [selectedTask, setSelectedTask] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [trackPoints, setTrackPoints] = useState([]);
@@ -99,29 +96,25 @@ export default function SurveyorDashboard() {
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
-  const handleCreateStretch = async (e) => {
-    e.preventDefault();
-    if (!newRoadName) return;
+  const handleSaveStretchFromChecker = async (taskData) => {
     const newTask = {
       id: `task_${Date.now()}`,
-      title: newRoadName,
-      road_name: newRoadName,
-      start_address: startPoint || 'Current Location',
-      end_address: endPoint || 'Endpoint',
-      target_speed_kmh: Number(targetSpeed) || 25,
+      title: taskData.title,
+      road_name: taskData.road_name,
+      start_address: taskData.start_address,
+      end_address: taskData.end_address,
+      target_speed_kmh: taskData.target_speed_kmh || 25,
+      distance_km: taskData.distance_km || 0,
+      route_points: taskData.route_points || null,
       status: 'pending',
       created_at: new Date().toISOString()
     };
     try {
       await supabase.from('survey_tasks').insert([newTask]);
-    } catch { }
-    const updated = [newTask, ...tasks];
-    setTasks(updated);
+    } catch {}
+    setTasks(prev => [newTask, ...prev]);
     setSelectedTask(newTask);
     setShowDefineModal(false);
-    setNewRoadName('');
-    setStartPoint('');
-    setEndPoint('');
   };
   const totalKmSurveyed = trips.reduce((acc, t) => acc + (Number(t.total_distance_km) || 0), 0);
   const avgPci = trips.length > 0
@@ -346,73 +339,11 @@ export default function SurveyorDashboard() {
         )}
       </div>
       {showDefineModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-          <div className="gov-card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '14px' }}>
-              Define Road Stretch
-            </h2>
-            <form onSubmit={handleCreateStretch} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Road Name</label>
-                <input
-                  type="text"
-                  className="gov-input"
-                  placeholder="e.g. Ring Road Section A"
-                  value={newRoadName}
-                  onChange={(e) => setNewRoadName(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Start Location</label>
-                <input
-                  type="text"
-                  className="gov-input"
-                  placeholder="Start point or Landmark"
-                  value={startPoint}
-                  onChange={(e) => setStartPoint(e.target.value)}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>End Location</label>
-                <input
-                  type="text"
-                  className="gov-input"
-                  placeholder="End point or Landmark"
-                  value={endPoint}
-                  onChange={(e) => setEndPoint(e.target.value)}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Target Speed (km/h)</label>
-                <select
-                  value={targetSpeed}
-                  onChange={(e) => setTargetSpeed(e.target.value)}
-                  className="gov-input"
-                >
-                  <option value="20">20 km/h (Urban / Arterial)</option>
-                  <option value="25">25 km/h (State Highway)</option>
-                  <option value="30">30 km/h (National Highway Bypass)</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <button
-                  type="button"
-                  className="gov-btn-secondary"
-                  onClick={() => setShowDefineModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="gov-btn-primary"
-                >
-                  Save Stretch
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <StretchDistanceCheckerModal
+          userLocation={userLocation}
+          onClose={() => setShowDefineModal(false)}
+          onSaveStretch={handleSaveStretchFromChecker}
+        />
       )}
       {showPreFlight && (
         <PreFlightModal
