@@ -1,27 +1,41 @@
 import React, { useState } from 'react';
-import { Shield, Car, Building2, CheckCircle2, ArrowRight, Lock, Mail, AlertCircle } from 'lucide-react';
+import { Shield, Car, Building2, ArrowRight, Lock, Mail, AlertCircle, UserPlus, Key } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function LoginPage() {
-  const { loginAs, loginCustom } = useAuth();
+  const { loginWithCredentials, registerAccount } = useAuth();
   const [selectedRole, setSelectedRole] = useState('surveyor');
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email || !password) {
-      setError('Please provide your authorized government email and password.');
+    if (!identifier || !password) {
+      setError('Please provide your authorized government ID/Email and password.');
       return;
     }
     if (selectedRole === 'surveyor' && !vehicleNumber) {
-      setError('Please enter the registration number of the survey vehicle.');
+      setError('Please provide the vehicle registration number.');
       return;
     }
     setError('');
-    loginCustom(email, selectedRole, vehicleNumber);
+    setLoading(true);
+    try {
+      if (isRegisterMode) {
+        await registerAccount(identifier, password, selectedRole, fullName, vehicleNumber);
+      } else {
+        await loginWithCredentials(identifier, password, selectedRole, vehicleNumber);
+      }
+    } catch (err) {
+      setError(err.message || 'Authentication failed. Please verify credentials.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -32,17 +46,17 @@ export default function LoginPage() {
             <Shield size={34} strokeWidth={2.2} />
           </div>
           <h1 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--gov-navy)', letterSpacing: '-0.5px' }}>
-            Government Portal Login
+            {isRegisterMode ? 'Register Government Account' : 'Government Portal Login'}
           </h1>
           <p style={{ fontSize: '14px', color: 'var(--gov-text-secondary)', marginTop: '6px' }}>
-            Road Safety, Pavement Condition Index (PCI) & Survey Management System
+            National Road Safety, Pavement Condition Index (PCI) & Survey Management
           </p>
         </div>
 
         <div className="gov-card" style={{ padding: '28px', border: '1px solid var(--gov-border)', boxShadow: 'var(--shadow-md)' }}>
           <div style={{ marginBottom: '22px' }}>
             <label style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--gov-text-secondary)', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
-              Select Your Official Role
+              Select Operational Role
             </label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <button
@@ -103,18 +117,35 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {isRegisterMode && (
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--gov-text-primary)', display: 'block', marginBottom: '6px' }}>
+                  Full Officer / Driver Name
+                </label>
+                <input
+                  type="text"
+                  className="gov-input"
+                  placeholder="e.g. Er. Rajiv Baruah"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                />
+              </div>
+            )}
+
             <div>
               <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--gov-text-primary)', display: 'block', marginBottom: '6px' }}>
-                Government Email Address
+                Official Username or Email ID
               </label>
               <div style={{ position: 'relative' }}>
                 <input
-                  type="email"
+                  type="text"
                   className="gov-input"
                   placeholder={selectedRole === 'surveyor' ? 'surveyor.guwahati@pwd.gov.in' : 'engineer.hq@pwd.gov.in'}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
                   style={{ paddingLeft: '36px' }}
+                  required
                 />
                 <Mail size={16} color="var(--gov-text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
               </div>
@@ -132,6 +163,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ paddingLeft: '36px' }}
+                  required
                 />
                 <Lock size={16} color="var(--gov-text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
               </div>
@@ -150,6 +182,7 @@ export default function LoginPage() {
                     value={vehicleNumber}
                     onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())}
                     style={{ paddingLeft: '36px', letterSpacing: '0.5px', textTransform: 'uppercase' }}
+                    required
                   />
                   <Car size={16} color="var(--gov-text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
                 </div>
@@ -158,38 +191,23 @@ export default function LoginPage() {
 
             <button
               type="submit"
+              disabled={loading}
               className="gov-btn-primary"
-              style={{ width: '100%', marginTop: '8px', padding: '12px' }}
+              style={{ width: '100%', marginTop: '8px', padding: '12px', opacity: loading ? 0.7 : 1 }}
             >
-              <span>Sign In to {selectedRole === 'surveyor' ? 'Survey Portal' : 'Official Portal'}</span>
+              <span>{loading ? 'Authenticating...' : isRegisterMode ? 'Create Official Account' : `Sign In to ${selectedRole === 'surveyor' ? 'Survey Console' : 'Official Desk'}`}</span>
               <ArrowRight size={16} />
             </button>
           </form>
 
-          <div style={{ marginTop: '22px', paddingTop: '18px', borderTop: '1px solid var(--gov-border)' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--gov-text-muted)', textAlign: 'center', marginBottom: '10px', letterSpacing: '0.5px' }}>
-              Instant Demo Access
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              <button
-                type="button"
-                className="gov-btn-secondary"
-                onClick={() => loginAs('surveyor')}
-                style={{ fontSize: '12px', padding: '8px 10px' }}
-              >
-                <Car size={14} color="var(--gov-green)" />
-                <span>Demo Surveyor</span>
-              </button>
-              <button
-                type="button"
-                className="gov-btn-secondary"
-                onClick={() => loginAs('official')}
-                style={{ fontSize: '12px', padding: '8px 10px' }}
-              >
-                <Building2 size={14} color="var(--gov-blue)" />
-                <span>Demo Official</span>
-              </button>
-            </div>
+          <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid var(--gov-border)', textAlign: 'center' }}>
+            <button
+              type="button"
+              onClick={() => { setIsRegisterMode(!isRegisterMode); setError(''); }}
+              style={{ background: 'none', border: 'none', color: 'var(--gov-blue)', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              {isRegisterMode ? 'Already have an official account? Sign In' : 'Need to register a new survey vehicle or official account? Click here'}
+            </button>
           </div>
         </div>
 
