@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, Navigation, CheckCircle, Clock, Plus, Route, AlertCircle, Compass } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 import PreFlightModal from '../components/PreFlightModal';
 import SurveyCockpit from '../components/SurveyCockpit';
+import SurveyorTrackMap from '../components/SurveyorTrackMap';
 
 export default function SurveyorDashboard() {
   const { currentUser } = useAuth();
@@ -19,6 +20,9 @@ export default function SurveyorDashboard() {
   const [endPoint, setEndPoint] = useState('');
   const [targetSpeed, setTargetSpeed] = useState('25');
   const [selectedTask, setSelectedTask] = useState(null);
+  const [userLocation, setUserLocation] = useState(null);
+  const [trackPoints, setTrackPoints] = useState([]);
+  const prevCoordsRef = useRef(null);
 
   const loadSurveyData = async () => {
     setLoading(true);
@@ -47,6 +51,29 @@ export default function SurveyorDashboard() {
 
   useEffect(() => {
     loadSurveyData();
+  }, []);
+
+  useEffect(() => {
+    if (!('geolocation' in navigator)) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setUserLocation([lat, lng]);
+        setTrackPoints(prev => {
+          if (prev.length > 0) {
+            const last = prev[prev.length - 1];
+            const dLat = Math.abs(last[0] - lat);
+            const dLng = Math.abs(last[1] - lng);
+            if (dLat < 0.00005 && dLng < 0.00005) return prev;
+          }
+          return [...prev, [lat, lng]];
+        });
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
   const handleCreateStretch = async (e) => {
@@ -162,6 +189,13 @@ export default function SurveyorDashboard() {
         </div>
       </div>
 
+      <SurveyorTrackMap
+        userLocation={userLocation}
+        trackPoints={trackPoints}
+        taskRoutePoints={selectedTask?.route_points || null}
+        height={200}
+      />
+
       <div style={{ display: 'grid', gridTemplateColumns: tasks.length > 0 ? 'minmax(320px, 1.2fr) minmax(360px, 1.8fr)' : '1fr', gap: '20px' }}>
         <div className="gov-card" style={{ overflow: 'hidden' }}>
           <div style={{ padding: '14px 18px', background: 'var(--gov-card-subtle)', borderBottom: '1px solid var(--gov-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -231,6 +265,13 @@ export default function SurveyorDashboard() {
               </div>
             </div>
 
+            <SurveyorTrackMap
+              userLocation={userLocation}
+              trackPoints={trackPoints}
+              taskRoutePoints={selectedTask.route_points || null}
+              height={260}
+            />
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <div style={{ background: 'var(--gov-card-subtle)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
                 <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Target Survey Speed</div>
@@ -246,11 +287,15 @@ export default function SurveyorDashboard() {
               </div>
             </div>
 
-            <div style={{ marginTop: 'auto', paddingTop: '14px', borderTop: '1px solid var(--gov-border)', display: 'flex', gap: '10px' }}>
+            <div style={{ paddingTop: '4px', borderTop: '1px solid var(--gov-border)', display: 'flex', gap: '10px' }}>
               <button
                 className="gov-btn-secondary"
                 style={{ flex: 1 }}
-                onClick={() => alert(`Opening navigation to ${selectedTask.start_address}`)}
+                onClick={() => {
+                  if (userLocation) {
+                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedTask.start_address}`, '_blank');
+                  }
+                }}
               >
                 <Compass size={15} />
                 <span>Navigate to Start</span>

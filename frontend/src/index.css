@@ -196,11 +196,7 @@ input, select, textarea {
 }
 
 .leaflet-container {
-  width: 100% !important;
-  height: 100% !important;
-  border-radius: inherit;
-  z-index: 10;
-  background: #f1f5f9 !important;
+  z-index: 1;
 }
 .leaflet-control-attribution {
   display: none !important;
