@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Any
+import json
 from ..database import get_db
 
 router = APIRouter(prefix="/api/tasks", tags=["Task Dispatch"])
@@ -14,6 +15,9 @@ class TaskCreate(BaseModel):
     end_address: Optional[str] = "Stretch End"
     official_notes: Optional[str] = ""
     priority: Optional[str] = "routine"
+    distance_km: Optional[float] = 0.0
+    route_points: Optional[List[Any]] = None
+    state: Optional[str] = "Assam"
 
 class TaskStatusUpdate(BaseModel):
     status: str
@@ -22,26 +26,26 @@ class TaskReply(BaseModel):
     reply_text: str
 
 @router.get("")
-def list_tasks(vehicle_id: Optional[str] = None):
+def list_tasks(vehicle_id: Optional[str] = None, state: Optional[str] = None):
     with get_db() as conn:
         with conn.cursor() as cur:
+            query = """
+                SELECT id, title, road_name, assigned_vehicle_id, assigned_vehicle_number,
+                       target_speed_kmh, start_address, end_address, official_notes,
+                       status, priority, distance_km, route_points, state,
+                       surveyor_reply, reply_unread_by_official, created_at
+                FROM public.survey_tasks
+                WHERE 1=1
+            """
+            params = []
             if vehicle_id:
-                cur.execute("""
-                    SELECT id, title, road_name, assigned_vehicle_id, assigned_vehicle_number,
-                           target_speed_kmh, start_address, end_address, official_notes,
-                           status, priority, surveyor_reply, reply_unread_by_official, created_at
-                    FROM public.survey_tasks
-                    WHERE assigned_vehicle_id = %s
-                    ORDER BY created_at DESC;
-                """, (vehicle_id,))
-            else:
-                cur.execute("""
-                    SELECT id, title, road_name, assigned_vehicle_id, assigned_vehicle_number,
-                           target_speed_kmh, start_address, end_address, official_notes,
-                           status, priority, surveyor_reply, reply_unread_by_official, created_at
-                    FROM public.survey_tasks
-                    ORDER BY created_at DESC;
-                """)
+                query += " AND assigned_vehicle_id = %s"
+                params.append(vehicle_id)
+            if state:
+                query += " AND state = %s"
+                params.append(state)
+            query += " ORDER BY created_at DESC;"
+            cur.execute(query, tuple(params))
             return [dict(r) for r in cur.fetchall()]
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -53,17 +57,21 @@ def create_task(payload: TaskCreate):
             if not veh:
                 raise HTTPException(status_code=404, detail="Assigned vehicle not found")
             veh_number = veh["vehicle_number"]
+            route_json = json.dumps(payload.route_points) if payload.route_points else None
             cur.execute("""
                 INSERT INTO public.survey_tasks
                     (title, road_name, assigned_vehicle_id, assigned_vehicle_number,
-                     target_speed_kmh, start_address, end_address, official_notes, priority, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+                     target_speed_kmh, start_address, end_address, official_notes, priority,
+                     distance_km, route_points, state, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
                 RETURNING id, title, road_name, assigned_vehicle_id, assigned_vehicle_number,
                           target_speed_kmh, start_address, end_address, official_notes,
-                          priority, status, surveyor_reply, reply_unread_by_official, created_at;
+                          priority, distance_km, route_points, state, status,
+                          surveyor_reply, reply_unread_by_official, created_at;
             """, (payload.title, payload.road_name, payload.assigned_vehicle_id, veh_number,
                   payload.target_speed_kmh, payload.start_address, payload.end_address,
-                  payload.official_notes, payload.priority))
+                  payload.official_notes, payload.priority, payload.distance_km,
+                  route_json, payload.state))
             new_task = cur.fetchone()
             return dict(new_task)
 

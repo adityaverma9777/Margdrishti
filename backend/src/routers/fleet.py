@@ -10,7 +10,8 @@ class VehicleCreate(BaseModel):
     model_name: Optional[str] = "Inspection Unit"
     driver_name: Optional[str] = "Driver Assigned"
     crew_members: Optional[List[str]] = []
-    jurisdiction_name: Optional[str] = "General Division"
+    jurisdiction_name: Optional[str] = "Assam PWD Division"
+    state: Optional[str] = "Assam"
 
 class VehicleUpdate(BaseModel):
     model_name: Optional[str] = None
@@ -18,18 +19,29 @@ class VehicleUpdate(BaseModel):
     crew_members: Optional[List[str]] = None
     status: Optional[str] = None
     jurisdiction_name: Optional[str] = None
+    state: Optional[str] = None
 
 @router.get("/vehicles")
-def list_vehicles():
+def list_vehicles(state: Optional[str] = None):
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, vehicle_number, model_name, driver_name, crew_members, 
-                       jurisdiction_name, status, total_distance_km, defects_logged, 
-                       has_unread_reply, last_heartbeat, created_at
-                FROM public.survey_vehicles
-                ORDER BY created_at DESC;
-            """)
+            if state:
+                cur.execute("""
+                    SELECT id, vehicle_number, model_name, driver_name, crew_members, 
+                           jurisdiction_name, state, status, total_distance_km, defects_logged, 
+                           has_unread_reply, last_heartbeat, created_at
+                    FROM public.survey_vehicles
+                    WHERE state = %s OR state IS NULL
+                    ORDER BY created_at DESC;
+                """, (state,))
+            else:
+                cur.execute("""
+                    SELECT id, vehicle_number, model_name, driver_name, crew_members, 
+                           jurisdiction_name, state, status, total_distance_km, defects_logged, 
+                           has_unread_reply, last_heartbeat, created_at
+                    FROM public.survey_vehicles
+                    ORDER BY created_at DESC;
+                """)
             rows = cur.fetchall()
             return [dict(r) for r in rows]
 
@@ -46,12 +58,12 @@ def create_vehicle(payload: VehicleCreate):
             crew = payload.crew_members if payload.crew_members else [payload.driver_name]
             cur.execute("""
                 INSERT INTO public.survey_vehicles 
-                    (vehicle_number, model_name, driver_name, crew_members, jurisdiction_name, status)
-                VALUES (%s, %s, %s, %s, %s, 'idle')
+                    (vehicle_number, model_name, driver_name, crew_members, jurisdiction_name, state, status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'idle')
                 RETURNING id, vehicle_number, model_name, driver_name, crew_members, 
-                          jurisdiction_name, status, total_distance_km, defects_logged, 
+                          jurisdiction_name, state, status, total_distance_km, defects_logged, 
                           has_unread_reply, created_at;
-            """, (veh_num, payload.model_name, payload.driver_name, crew, payload.jurisdiction_name))
+            """, (veh_num, payload.model_name, payload.driver_name, crew, payload.jurisdiction_name, payload.state))
             new_veh = cur.fetchone()
             return dict(new_veh)
 
@@ -61,7 +73,7 @@ def get_vehicle(vehicle_id: str):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, vehicle_number, model_name, driver_name, crew_members, 
-                       jurisdiction_name, status, total_distance_km, defects_logged, 
+                       jurisdiction_name, state, status, total_distance_km, defects_logged, 
                        has_unread_reply, last_heartbeat, created_at
                 FROM public.survey_vehicles
                 WHERE id = %s;

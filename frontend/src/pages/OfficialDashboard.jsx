@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Car, Plus, Send, RefreshCw, Printer, ShieldCheck, AlertCircle, History, MessageSquare, Check, X, CheckCircle, FileText } from 'lucide-react';
+import { Car, Plus, Send, RefreshCw, Printer, ShieldCheck, AlertCircle, History, MessageSquare, Check, X, MapPin, Globe, Route, PenTool } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
   fetchFleetVehicles,
@@ -13,9 +13,15 @@ import {
   fetchDefectAuditTrail,
   fetchOfficialSummary
 } from '../services/officialApi';
+import FleetOverviewMap from '../components/FleetOverviewMap';
+import StretchPlannerMap from '../components/StretchPlannerMap';
+import { STATE_COORDINATES } from '../utils/routingEngine';
+
+const STATE_OPTIONS = Object.keys(STATE_COORDINATES);
 
 export default function OfficialDashboard() {
   const { currentUser } = useAuth();
+  const [selectedState, setSelectedState] = useState('Assam');
   const [activeTab, setActiveTab] = useState('fleet');
   const [vehicles, setVehicles] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
@@ -34,12 +40,14 @@ export default function OfficialDashboard() {
   const [newVehModel, setNewVehModel] = useState('');
   const [newVehDriver, setNewVehDriver] = useState('');
   const [newVehCrew, setNewVehCrew] = useState('');
-  const [newVehJurisdiction, setNewVehJurisdiction] = useState('Central Highway Division');
+  const [newVehJurisdiction, setNewVehJurisdiction] = useState('Assam PWD Central Division');
 
   const [taskStretchName, setTaskStretchName] = useState('');
   const [taskNotes, setTaskNotes] = useState('');
   const [taskSpeed, setTaskSpeed] = useState('25');
   const [taskPriority, setTaskPriority] = useState('routine');
+  const [taskDistanceKm, setTaskDistanceKm] = useState(0);
+  const [taskRoutePoints, setTaskRoutePoints] = useState(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -48,11 +56,12 @@ export default function OfficialDashboard() {
       fetchDefectsLedger(),
       fetchOfficialSummary()
     ]);
-    setVehicles(vehList);
+    const filteredVehicles = vehList.filter(v => !v.state || v.state === selectedState);
+    setVehicles(filteredVehicles);
     setDefects(defectList);
     setSummary(sumData);
-    if (vehList.length > 0) {
-      const active = selectedVehicle ? vehList.find(v => v.id === selectedVehicle.id) || vehList[0] : vehList[0];
+    if (filteredVehicles.length > 0) {
+      const active = selectedVehicle ? filteredVehicles.find(v => v.id === selectedVehicle.id) || filteredVehicles[0] : filteredVehicles[0];
       setSelectedVehicle(active);
       const tasks = await fetchSurveyTasks(active.id);
       setVehicleTasks(tasks);
@@ -61,11 +70,11 @@ export default function OfficialDashboard() {
       setVehicleTasks([]);
     }
     setLoading(false);
-  }, [selectedVehicle]);
+  }, [selectedVehicle, selectedState]);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [selectedState]);
 
   const handleSelectVehicle = async (veh) => {
     setSelectedVehicle(veh);
@@ -82,7 +91,8 @@ export default function OfficialDashboard() {
       model_name: newVehModel || 'Inspection Unit',
       driver_name: newVehDriver || 'Driver Assigned',
       crew_members: crewList,
-      jurisdiction_name: newVehJurisdiction || 'Central Highway Division'
+      jurisdiction_name: newVehJurisdiction || `${selectedState} PWD Division`,
+      state: selectedState
     });
     if (created) {
       setNewVehNumber('');
@@ -100,6 +110,12 @@ export default function OfficialDashboard() {
     await loadData();
   };
 
+  const handleRouteConfirmedFromMap = (routeInfo) => {
+    setTaskStretchName(routeInfo.roadName);
+    setTaskDistanceKm(routeInfo.distanceKm);
+    setTaskRoutePoints(routeInfo.routePoints);
+  };
+
   const handleAssignTask = async (e) => {
     e.preventDefault();
     if (!taskStretchName || !selectedVehicle) return;
@@ -110,13 +126,18 @@ export default function OfficialDashboard() {
       target_speed_kmh: Number(taskSpeed) || 25,
       official_notes: taskNotes,
       priority: taskPriority,
-      start_address: 'Assigned Start Point',
-      end_address: 'Assigned End Point'
+      distance_km: taskDistanceKm || 0,
+      route_points: taskRoutePoints || null,
+      state: selectedState,
+      start_address: `${selectedState} Stretch Start`,
+      end_address: `${selectedState} Stretch End`
     };
     await dispatchTask(newTask);
     setShowAssignModal(false);
     setTaskStretchName('');
     setTaskNotes('');
+    setTaskDistanceKm(0);
+    setTaskRoutePoints(null);
     const tasks = await fetchSurveyTasks(selectedVehicle.id);
     setVehicleTasks(tasks);
   };
@@ -127,7 +148,7 @@ export default function OfficialDashboard() {
       const tasks = await fetchSurveyTasks(selectedVehicle.id);
       setVehicleTasks(tasks);
       const vehList = await fetchFleetVehicles();
-      setVehicles(vehList);
+      setVehicles(vehList.filter(v => !v.state || v.state === selectedState));
     }
   };
 
@@ -152,7 +173,7 @@ export default function OfficialDashboard() {
 
   return (
     <div className="gov-container" style={{ padding: '24px 20px', minHeight: 'calc(100vh - 60px)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '22px', flexWrap: 'wrap', gap: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-navy)', letterSpacing: '-0.3px' }}>
@@ -161,10 +182,25 @@ export default function OfficialDashboard() {
             <span className="gov-badge gov-badge-blue">Official Console</span>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-            Officer: <strong>{currentUser?.name || 'Executive Officer'}</strong>
+            Officer: <strong>{currentUser?.name || 'Executive Officer'}</strong> • Active State: <strong>{selectedState}</strong>
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#ffffff', border: '1px solid var(--gov-border)', padding: '6px 12px', borderRadius: 'var(--radius-sm)' }}>
+            <Globe size={15} color="var(--gov-blue)" />
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)' }}>Jurisdiction:</span>
+            <select
+              value={selectedState}
+              onChange={(e) => setSelectedState(e.target.value)}
+              style={{ border: 'none', background: 'transparent', fontWeight: 700, fontSize: '13px', color: 'var(--gov-navy)', outline: 'none', cursor: 'pointer' }}
+            >
+              {STATE_OPTIONS.map(st => (
+                <option key={st} value={st}>{st}</option>
+              ))}
+            </select>
+          </div>
+
           <button className="gov-btn-secondary" onClick={loadData}>
             <RefreshCw size={14} />
             <span>Sync</span>
@@ -180,16 +216,16 @@ export default function OfficialDashboard() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '22px' }}>
         <div className="gov-card" style={{ padding: '18px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
-            Survey Vehicles
+            Survey Vehicles ({selectedState})
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-navy)', marginTop: '6px' }}>
-            {summary ? summary.fleet.total_vehicles : vehicles.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Units</span>
+            {vehicles.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Units</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
-            Registered in fleet
+            Registered in {selectedState} fleet
           </div>
         </div>
 
@@ -268,188 +304,198 @@ export default function OfficialDashboard() {
       </div>
 
       {activeTab === 'fleet' && (
-        <div style={{ display: 'grid', gridTemplateColumns: vehicles.length > 0 ? 'minmax(300px, 1.1fr) minmax(360px, 1.9fr)' : '1fr', gap: '20px' }}>
-          <div className="gov-card" style={{ overflow: 'hidden' }}>
-            <div style={{ padding: '14px 18px', background: 'var(--gov-card-subtle)', borderBottom: '1px solid var(--gov-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-navy)' }}>
-                Registered Fleet ({vehicles.length})
-              </span>
-              <button
-                className="gov-btn-primary"
-                onClick={() => setShowAddVehicleModal(true)}
-                style={{ padding: '4px 10px', fontSize: '12px' }}
-              >
-                <Plus size={13} />
-                <span>Add Vehicle</span>
-              </button>
-            </div>
+        <div>
+          <FleetOverviewMap
+            selectedState={selectedState}
+            vehicles={vehicles}
+            selectedVehicle={selectedVehicle}
+            onSelectVehicle={handleSelectVehicle}
+            defects={defects}
+          />
 
-            {loading ? (
-              <div style={{ padding: '36px', textAlign: 'center', color: 'var(--gov-text-muted)', fontSize: '13px' }}>
-                Loading fleet data...
-              </div>
-            ) : vehicles.length === 0 ? (
-              <div style={{ padding: '36px 20px', textAlign: 'center' }}>
-                <Car size={32} color="var(--gov-text-muted)" style={{ margin: '0 auto 10px' }} />
-                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-text-primary)' }}>No Survey Vehicles Registered</div>
-                <p style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '4px', maxWidth: '340px', margin: '4px auto 14px' }}>
-                  Register your first vehicle unit to dispatch road stretches and track field surveys.
-                </p>
+          <div style={{ display: 'grid', gridTemplateColumns: vehicles.length > 0 ? 'minmax(300px, 1.1fr) minmax(360px, 1.9fr)' : '1fr', gap: '20px' }}>
+            <div className="gov-card" style={{ overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px', background: 'var(--gov-card-subtle)', borderBottom: '1px solid var(--gov-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-navy)' }}>
+                  Registered Fleet in {selectedState} ({vehicles.length})
+                </span>
                 <button
                   className="gov-btn-primary"
                   onClick={() => setShowAddVehicleModal(true)}
-                  style={{ fontSize: '13px', padding: '8px 14px' }}
+                  style={{ padding: '4px 10px', fontSize: '12px' }}
                 >
-                  <Plus size={14} />
-                  <span>Register Vehicle</span>
+                  <Plus size={13} />
+                  <span>Add Vehicle</span>
                 </button>
               </div>
-            ) : (
-              <div>
-                {vehicles.map((v) => {
-                  const isSelected = selectedVehicle?.id === v.id;
-                  return (
-                    <div
-                      key={v.id}
-                      onClick={() => handleSelectVehicle(v)}
-                      style={{
-                        padding: '14px 18px',
-                        borderBottom: '1px solid var(--gov-border)',
-                        cursor: 'pointer',
-                        background: isSelected ? '#f0f9ff' : '#ffffff',
-                        borderLeft: isSelected ? '4px solid var(--gov-blue)' : '4px solid transparent'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>{v.vehicle_number}</span>
-                            {v.has_unread_reply && (
-                              <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#dc2626' }} title="Unread surveyor reply" />
-                            )}
+
+              {loading ? (
+                <div style={{ padding: '36px', textAlign: 'center', color: 'var(--gov-text-muted)', fontSize: '13px' }}>
+                  Loading fleet data...
+                </div>
+              ) : vehicles.length === 0 ? (
+                <div style={{ padding: '36px 20px', textAlign: 'center' }}>
+                  <Car size={32} color="var(--gov-text-muted)" style={{ margin: '0 auto 10px' }} />
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-text-primary)' }}>No Vehicles in {selectedState}</div>
+                  <p style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '4px', maxWidth: '340px', margin: '4px auto 14px' }}>
+                    Register an inspection vehicle unit in {selectedState} to dispatch survey stretches.
+                  </p>
+                  <button
+                    className="gov-btn-primary"
+                    onClick={() => setShowAddVehicleModal(true)}
+                    style={{ fontSize: '13px', padding: '8px 14px' }}
+                  >
+                    <Plus size={14} />
+                    <span>Register Vehicle in {selectedState}</span>
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  {vehicles.map((v) => {
+                    const isSelected = selectedVehicle?.id === v.id;
+                    return (
+                      <div
+                        key={v.id}
+                        onClick={() => handleSelectVehicle(v)}
+                        style={{
+                          padding: '14px 18px',
+                          borderBottom: '1px solid var(--gov-border)',
+                          cursor: 'pointer',
+                          background: isSelected ? '#f0f9ff' : '#ffffff',
+                          borderLeft: isSelected ? '4px solid var(--gov-blue)' : '4px solid transparent'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>{v.vehicle_number}</span>
+                              {v.has_unread_reply && (
+                                <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#dc2626' }} title="Unread surveyor reply" />
+                              )}
+                            </div>
+                            <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
+                              {v.model_name} • Driver: {v.driver_name}
+                            </div>
                           </div>
-                          <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
-                            {v.model_name} • Driver: {v.driver_name}
-                          </div>
+                          <span className={`gov-badge ${v.status === 'in_survey' ? 'gov-badge-green' : 'gov-badge-neutral'}`} style={{ fontSize: '10px' }}>
+                            {v.status === 'in_survey' ? 'Surveying' : 'Idle'}
+                          </span>
                         </div>
-                        <span className={`gov-badge ${v.status === 'in_survey' ? 'gov-badge-green' : 'gov-badge-neutral'}`} style={{ fontSize: '10px' }}>
-                          {v.status === 'in_survey' ? 'Surveying' : 'Idle'}
-                        </span>
                       </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {selectedVehicle && (
+              <div className="gov-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--gov-border)', paddingBottom: '14px' }}>
+                  <div>
+                    <div style={{ fontSize: '17px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                      Vehicle {selectedVehicle.vehicle_number}
                     </div>
-                  );
-                })}
+                    <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
+                      {selectedVehicle.model_name} • Driver: {selectedVehicle.driver_name} • Division: {selectedVehicle.jurisdiction_name || selectedState}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      className="gov-btn-primary"
+                      onClick={() => setShowAssignModal(true)}
+                      style={{ padding: '7px 14px', fontSize: '12px' }}
+                    >
+                      <Send size={13} />
+                      <span>Define & Dispatch Stretch</span>
+                    </button>
+                    <button
+                      className="gov-btn-secondary"
+                      onClick={() => handleDeleteVehicle(selectedVehicle.id)}
+                      style={{ padding: '7px 10px', fontSize: '12px', color: 'var(--gov-red)' }}
+                      title="Decommission vehicle"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ background: 'var(--gov-card-subtle)', padding: '12px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Crew Members</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
+                      {Array.isArray(selectedVehicle.crew_members) ? selectedVehicle.crew_members.join(', ') : selectedVehicle.driver_name}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Distance Logged</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
+                      {Number(selectedVehicle.total_distance_km || 0).toFixed(1)} KM
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Defects Logged</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
+                      {selectedVehicle.defects_logged || 0} Points
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '10px' }}>
+                    Dispatched Tasks ({vehicleTasks.length})
+                  </div>
+
+                  {vehicleTasks.length === 0 ? (
+                    <div style={{ padding: '24px', textAlign: 'center', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+                      <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)' }}>No survey tasks dispatched to this unit yet.</div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {vehicleTasks.map((t) => (
+                        <div key={t.id} style={{ background: '#ffffff', border: '1px solid var(--gov-border)', borderRadius: 'var(--radius-sm)', padding: '12px 14px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>{t.road_name || t.title}</span>
+                            <span className={`gov-badge ${t.status === 'completed' ? 'gov-badge-green' : t.status === 'in_progress' ? 'gov-badge-blue' : 'gov-badge-neutral'}`} style={{ fontSize: '11px' }}>
+                              {t.status}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
+                            Target Speed: {t.target_speed_kmh} km/h • Priority: {t.priority || 'routine'} {t.distance_km ? `• Length: ${t.distance_km} KM` : ''}
+                          </div>
+                          {t.official_notes && (
+                            <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px', fontStyle: 'italic' }}>
+                              Notes: "{t.official_notes}"
+                            </div>
+                          )}
+                          {t.surveyor_reply && (
+                            <div style={{ marginTop: '8px', padding: '8px 10px', background: t.reply_unread_by_official ? '#fef2f2' : '#f8fafc', border: `1px solid ${t.reply_unread_by_official ? '#fecaca' : '#e2e8f0'}`, borderRadius: '4px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: t.reply_unread_by_official ? '#dc2626' : '#64748b' }}>
+                                  Crew Feedback {t.reply_unread_by_official && '(NEW)'}:
+                                </span>
+                                {t.reply_unread_by_official && (
+                                  <button
+                                    onClick={() => handleMarkReplyRead(t.id)}
+                                    style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                                  >
+                                    <Check size={12} />
+                                    <span>Mark Read</span>
+                                  </button>
+                                )}
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#0f172a', marginTop: '2px' }}>
+                                {t.surveyor_reply}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
-
-          {selectedVehicle && (
-            <div className="gov-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--gov-border)', paddingBottom: '14px' }}>
-                <div>
-                  <div style={{ fontSize: '17px', fontWeight: 800, color: 'var(--gov-navy)' }}>
-                    Vehicle {selectedVehicle.vehicle_number}
-                  </div>
-                  <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
-                    {selectedVehicle.model_name} • Driver: {selectedVehicle.driver_name} • Jurisdiction: {selectedVehicle.jurisdiction_name || 'General Division'}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    className="gov-btn-primary"
-                    onClick={() => setShowAssignModal(true)}
-                    style={{ padding: '7px 14px', fontSize: '12px' }}
-                  >
-                    <Send size={13} />
-                    <span>Dispatch Stretch</span>
-                  </button>
-                  <button
-                    className="gov-btn-secondary"
-                    onClick={() => handleDeleteVehicle(selectedVehicle.id)}
-                    style={{ padding: '7px 10px', fontSize: '12px', color: 'var(--gov-red)' }}
-                    title="Decommission vehicle"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ background: 'var(--gov-card-subtle)', padding: '12px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
-                <div>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Crew Members</div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
-                    {Array.isArray(selectedVehicle.crew_members) ? selectedVehicle.crew_members.join(', ') : selectedVehicle.driver_name}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Distance Logged</div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
-                    {Number(selectedVehicle.total_distance_km || 0).toFixed(1)} KM
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Defects Logged</div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
-                    {selectedVehicle.defects_logged || 0} Points
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '10px' }}>
-                  Dispatched Tasks ({vehicleTasks.length})
-                </div>
-
-                {vehicleTasks.length === 0 ? (
-                  <div style={{ padding: '24px', textAlign: 'center', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
-                    <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)' }}>No survey tasks dispatched to this unit yet.</div>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {vehicleTasks.map((t) => (
-                      <div key={t.id} style={{ background: '#ffffff', border: '1px solid var(--gov-border)', borderRadius: 'var(--radius-sm)', padding: '12px 14px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>{t.road_name || t.title}</span>
-                          <span className={`gov-badge ${t.status === 'completed' ? 'gov-badge-green' : t.status === 'in_progress' ? 'gov-badge-blue' : 'gov-badge-neutral'}`} style={{ fontSize: '11px' }}>
-                            {t.status}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-                          Target Speed: {t.target_speed_kmh} km/h • Priority: {t.priority || 'routine'}
-                        </div>
-                        {t.official_notes && (
-                          <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px', fontStyle: 'italic' }}>
-                            Notes: "{t.official_notes}"
-                          </div>
-                        )}
-                        {t.surveyor_reply && (
-                          <div style={{ marginTop: '8px', padding: '8px 10px', background: t.reply_unread_by_official ? '#fef2f2' : '#f8fafc', border: `1px solid ${t.reply_unread_by_official ? '#fecaca' : '#e2e8f0'}`, borderRadius: '4px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '11px', fontWeight: 700, color: t.reply_unread_by_official ? '#dc2626' : '#64748b' }}>
-                                Crew Feedback {t.reply_unread_by_official && '(NEW)'}:
-                              </span>
-                              {t.reply_unread_by_official && (
-                                <button
-                                  onClick={() => handleMarkReplyRead(t.id)}
-                                  style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                                >
-                                  <Check size={12} />
-                                  <span>Mark Read</span>
-                                </button>
-                              )}
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#0f172a', marginTop: '2px' }}>
-                              {t.surveyor_reply}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -577,7 +623,7 @@ export default function OfficialDashboard() {
         <div className="gov-card" style={{ padding: '24px' }}>
           <div style={{ borderBottom: '2px solid var(--gov-navy)', paddingBottom: '14px', marginBottom: '18px' }}>
             <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--gov-navy)' }}>
-              National Road Network Pavement Quality Audit & Compliance Dossier
+              National Road Network Pavement Quality Audit & Compliance Dossier ({selectedState})
             </div>
             <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
               Standard ASTM D6433 Pavement Condition Index (PCI) Engineering Audit Summary
@@ -643,7 +689,7 @@ export default function OfficialDashboard() {
           <div className="gov-card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)' }}>
-                Register Survey Vehicle
+                Register Survey Vehicle ({selectedState})
               </h2>
               <button onClick={() => setShowAddVehicleModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
                 <X size={18} />
@@ -697,7 +743,6 @@ export default function OfficialDashboard() {
                 <input
                   type="text"
                   className="gov-input"
-                  placeholder="e.g. North Zone PWD"
                   value={newVehJurisdiction}
                   onChange={(e) => setNewVehJurisdiction(e.target.value)}
                 />
@@ -716,31 +761,54 @@ export default function OfficialDashboard() {
       )}
 
       {showAssignModal && selectedVehicle && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-          <div className="gov-card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)' }}>
-                Dispatch Task to {selectedVehicle.vehicle_number}
-              </h2>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+          <div className="gov-card" style={{ width: '100%', maxWidth: '820px', maxHeight: '92vh', overflowY: 'auto', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--gov-border)', paddingBottom: '12px' }}>
+              <div>
+                <h2 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                  Define & Dispatch Stretch to {selectedVehicle.vehicle_number}
+                </h2>
+                <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
+                  State: <strong>{selectedState}</strong> • Click 2 points for commuter alternatives or draw along roads
+                </div>
+              </div>
               <button onClick={() => setShowAssignModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleAssignTask} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Road Stretch / Highway Name</label>
-                <input
-                  type="text"
-                  className="gov-input"
-                  placeholder="e.g. NH-27 Corridor KM 14-28"
-                  value={taskStretchName}
-                  onChange={(e) => setTaskStretchName(e.target.value)}
-                  required
-                />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+
+            <div style={{ marginBottom: '18px' }}>
+              <StretchPlannerMap
+                selectedState={selectedState}
+                onRouteConfirmed={handleRouteConfirmedFromMap}
+              />
+            </div>
+
+            <form onSubmit={handleAssignTask} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 2fr) 1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Target Speed (km/h)</label>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Selected Road Stretch</label>
+                  <input
+                    type="text"
+                    className="gov-input"
+                    placeholder="Click on map to select route or enter name..."
+                    value={taskStretchName}
+                    onChange={(e) => setTaskStretchName(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Length (KM)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    className="gov-input"
+                    value={taskDistanceKm}
+                    onChange={(e) => setTaskDistanceKm(Number(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Target Speed</label>
                   <input
                     type="number"
                     className="gov-input"
@@ -748,35 +816,40 @@ export default function OfficialDashboard() {
                     onChange={(e) => setTaskSpeed(e.target.value)}
                   />
                 </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '12px' }}>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Priority</label>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Priority Category</label>
                   <select
                     className="gov-input"
                     value={taskPriority}
                     onChange={(e) => setTaskPriority(e.target.value)}
                   >
-                    <option value="routine">Routine</option>
-                    <option value="urgent">Urgent</option>
-                    <option value="post_monsoon">Post-Monsoon</option>
+                    <option value="routine">Routine Inspection</option>
+                    <option value="urgent">Urgent Highway Audit</option>
+                    <option value="post_monsoon">Post-Monsoon Audit</option>
                   </select>
                 </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Official Instructions / Distress Notes</label>
+                  <input
+                    type="text"
+                    className="gov-input"
+                    placeholder="Specific potholes or shoulder drop-offs to verify..."
+                    value={taskNotes}
+                    onChange={(e) => setTaskNotes(e.target.value)}
+                  />
+                </div>
               </div>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Official Instructions / Notes</label>
-                <textarea
-                  className="gov-input"
-                  rows={3}
-                  placeholder="Specific potholes or shoulder drop-offs to verify..."
-                  value={taskNotes}
-                  onChange={(e) => setTaskNotes(e.target.value)}
-                />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
                 <button type="button" className="gov-btn-secondary" onClick={() => setShowAssignModal(false)}>
                   Cancel
                 </button>
-                <button type="submit" className="gov-btn-primary">
-                  Dispatch Survey
+                <button type="submit" className="gov-btn-primary" disabled={!taskStretchName}>
+                  <Send size={14} />
+                  <span>Dispatch Stretch to {selectedVehicle.vehicle_number}</span>
                 </button>
               </div>
             </form>
