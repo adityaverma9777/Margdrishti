@@ -1,278 +1,243 @@
-import React, { useState } from 'react';
-import { Play, Map, Compass, Navigation, AlertTriangle, ShieldAlert, CheckCircle, Clock, Info, ChevronRight, Layers, Gauge } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Play, Navigation, CheckCircle, Clock, Plus, Route, AlertCircle, Compass } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const SAMPLE_STRETCHES = [
-  {
-    id: 'st_01',
-    name: 'NH-27 Guwahati Bypass (Khanapara to Jalukbari)',
-    type: 'NH',
-    distanceKm: 18.4,
-    status: 'needs_survey',
-    lastSurveyDate: '12-Oct-2025',
-    avgPci: 72,
-    potholesFound: 6,
-    recommendedSpeed: '25 km/h'
-  },
-  {
-    id: 'st_02',
-    name: 'SH-03 Assam Trunk Road (Paltan Bazar to Dispur)',
-    type: 'SH',
-    distanceKm: 8.2,
-    status: 'surveyed',
-    lastSurveyDate: '20-Nov-2026',
-    avgPci: 86,
-    potholesFound: 2,
-    recommendedSpeed: '20 km/h'
-  },
-  {
-    id: 'st_03',
-    name: 'GS Road Arterial (Bhangagarh to Six Mile)',
-    type: 'MDR',
-    distanceKm: 6.8,
-    status: 'surveyed',
-    lastSurveyDate: '18-Nov-2026',
-    avgPci: 81,
-    potholesFound: 3,
-    recommendedSpeed: '20 km/h'
-  },
-  {
-    id: 'st_04',
-    name: 'VIP Road (Six Mile to Narangi Tiniali)',
-    type: 'MDR',
-    distanceKm: 5.5,
-    status: 'needs_survey',
-    lastSurveyDate: '04-Aug-2025',
-    avgPci: 58,
-    potholesFound: 14,
-    recommendedSpeed: '20 km/h'
-  }
-];
+import { supabase } from '../supabaseClient';
 
 export default function SurveyorDashboard() {
   const { currentUser } = useAuth();
-  const [filterType, setFilterType] = useState('ALL');
-  const [selectedStretch, setSelectedStretch] = useState(SAMPLE_STRETCHES[0]);
-  const [activeTab, setActiveTab] = useState('stretches');
+  const [tasks, setTasks] = useState([]);
+  const [trips, setTrips] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showDefineModal, setShowDefineModal] = useState(false);
+  const [newRoadName, setNewRoadName] = useState('');
+  const [startPoint, setStartPoint] = useState('');
+  const [endPoint, setEndPoint] = useState('');
+  const [targetSpeed, setTargetSpeed] = useState('25');
+  const [selectedTask, setSelectedTask] = useState(null);
 
-  const filteredStretches = SAMPLE_STRETCHES.filter(st => {
-    if (filterType === 'ALL') return true;
-    return st.type === filterType;
-  });
+  const loadSurveyData = async () => {
+    setLoading(true);
+    try {
+      const { data: dbTasks } = await supabase
+        .from('survey_tasks')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (dbTasks) {
+        setTasks(dbTasks);
+        if (dbTasks.length > 0 && !selectedTask) {
+          setSelectedTask(dbTasks[0]);
+        }
+      }
+    } catch {}
 
-  const totalKm = SAMPLE_STRETCHES.reduce((acc, curr) => acc + curr.distanceKm, 0);
-  const surveyedKm = SAMPLE_STRETCHES.filter(s => s.status === 'surveyed').reduce((acc, curr) => acc + curr.distanceKm, 0);
+    try {
+      const { data: dbTrips } = await supabase
+        .from('survey_trips')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (dbTrips) setTrips(dbTrips);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadSurveyData();
+  }, []);
+
+  const handleCreateStretch = async (e) => {
+    e.preventDefault();
+    if (!newRoadName) return;
+    const newTask = {
+      id: `task_${Date.now()}`,
+      title: newRoadName,
+      road_name: newRoadName,
+      start_address: startPoint || 'Current Location',
+      end_address: endPoint || 'Endpoint',
+      target_speed_kmh: Number(targetSpeed) || 25,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    };
+    try {
+      await supabase.from('survey_tasks').insert([newTask]);
+    } catch {}
+    const updated = [newTask, ...tasks];
+    setTasks(updated);
+    setSelectedTask(newTask);
+    setShowDefineModal(false);
+    setNewRoadName('');
+    setStartPoint('');
+    setEndPoint('');
+  };
+
+  const totalKmSurveyed = trips.reduce((acc, t) => acc + (Number(t.total_distance_km) || 0), 0);
+  const avgPci = trips.length > 0
+    ? Math.round(trips.reduce((acc, t) => acc + (Number(t.calculated_pci) || 0), 0) / trips.length)
+    : null;
 
   return (
-    <div className="gov-container" style={{ padding: '24px 20px', minHeight: 'calc(100vh - 68px)' }}>
+    <div className="gov-container" style={{ padding: '24px 20px', minHeight: 'calc(100vh - 60px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '22px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--gov-navy)', letterSpacing: '-0.4px' }}>
-              Field Surveyor Console
+            <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-navy)', letterSpacing: '-0.3px' }}>
+              Surveyor Console
             </h1>
-            <span className="gov-badge gov-badge-green">Active</span>
+            <span className="gov-badge gov-badge-green">Unit Active</span>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-            Vehicle: <strong>{currentUser?.vehicleNumber || 'AS-01-BX-4021'}</strong>
+            Vehicle: <strong>{currentUser?.vehicleNumber || 'Unassigned Unit'}</strong>
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
             className="gov-btn-secondary"
-            onClick={() => setActiveTab('history')}
-            style={{ border: activeTab === 'history' ? '2px solid var(--gov-blue)' : undefined }}
+            onClick={() => setShowDefineModal(true)}
           >
-            <Clock size={16} color="var(--gov-blue)" />
-            <span>Past Surveys</span>
+            <Plus size={15} />
+            <span>Define Stretch</span>
           </button>
           <button
             className="gov-btn-primary"
-            onClick={() => alert('Pre-Flight Hardware Check & Optical Sensor initialization will launch in Milestone 5.')}
-            style={{ padding: '10px 20px', fontSize: '14px' }}
+            onClick={() => alert('Starting survey inspection mode...')}
           >
-            <Play size={16} fill="#ffffff" />
-            <span>Launch Survey Inspection</span>
+            <Play size={15} fill="#ffffff" />
+            <span>Start Survey</span>
           </button>
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
         <div className="gov-card" style={{ padding: '18px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-            Road Network in Division
+          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
+            Distance Surveyed
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-text-primary)', marginTop: '6px' }}>
-            {totalKm.toFixed(1)} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>KM Total</span>
+            {totalKmSurveyed.toFixed(1)} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>KM</span>
           </div>
-          <div style={{ fontSize: '12px', color: 'var(--gov-green)', marginTop: '4px', fontWeight: 600 }}>
-            {surveyedKm.toFixed(1)} KM Audited ({Math.round((surveyedKm / totalKm) * 100)}%)
-          </div>
-        </div>
-
-        <div className="gov-card" style={{ padding: '18px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-            Pending Inspections
-          </div>
-          <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-amber)', marginTop: '6px' }}>
-            {SAMPLE_STRETCHES.filter(s => s.status === 'needs_survey').length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Stretches</span>
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-            Scheduled for current inspection cycle
+          <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
+            {trips.length} Completed Trips
           </div>
         </div>
 
         <div className="gov-card" style={{ padding: '18px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-            Average Pavement Index (PCI)
+          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
+            Assigned Stretches
           </div>
-          <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-blue)', marginTop: '6px' }}>
-            79 <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>/ 100</span>
+          <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-navy)', marginTop: '6px' }}>
+            {tasks.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Stretches</span>
           </div>
-          <div style={{ fontSize: '12px', color: 'var(--gov-blue)', marginTop: '4px', fontWeight: 600 }}>
-            Satisfactory Quality Standard
+          <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
+            Tasks from Official Desk
           </div>
         </div>
 
         <div className="gov-card" style={{ padding: '18px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-            On-Device Sensor Status
+          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
+            Pavement Index (PCI)
           </div>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-green)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <CheckCircle size={22} color="var(--gov-green)" />
+          <div style={{ fontSize: '28px', fontWeight: 800, color: avgPci ? 'var(--gov-blue)' : 'var(--gov-text-muted)', marginTop: '6px' }}>
+            {avgPci !== null ? `${avgPci} / 100` : 'No Data'}
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
+            Calculated from completed scans
+          </div>
+        </div>
+
+        <div className="gov-card" style={{ padding: '18px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
+            Sensor & Camera
+          </div>
+          <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-green)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <CheckCircle size={20} color="var(--gov-green)" />
             <span>Hardware Ready</span>
           </div>
-          <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-            Browser WebGPU & Camera Ready
+          <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
+            WebGPU Vision Engine Active
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1.2fr) minmax(360px, 1.8fr)', gap: '20px' }}>
-        <div className="gov-card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--gov-border)', background: 'var(--gov-card-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-navy)' }}>
-                Road Stretches in Jurisdiction
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)' }}>
-                Select a stretch to inspect or review
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '4px' }}>
-              {['ALL', 'NH', 'SH', 'MDR'].map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setFilterType(t)}
-                  style={{
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    border: '1px solid',
-                    borderColor: filterType === t ? 'var(--gov-navy)' : 'var(--gov-border)',
-                    background: filterType === t ? 'var(--gov-navy)' : '#ffffff',
-                    color: filterType === t ? '#ffffff' : 'var(--gov-text-secondary)',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+      <div style={{ display: 'grid', gridTemplateColumns: tasks.length > 0 ? 'minmax(320px, 1.2fr) minmax(360px, 1.8fr)' : '1fr', gap: '20px' }}>
+        <div className="gov-card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px', background: 'var(--gov-card-subtle)', borderBottom: '1px solid var(--gov-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-navy)' }}>
+              Assigned Road Stretches ({tasks.length})
+            </span>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', maxHeight: '540px' }}>
-            {filteredStretches.map((st) => {
-              const isSelected = selectedStretch.id === st.id;
-              return (
-                <div
-                  key={st.id}
-                  onClick={() => setSelectedStretch(st)}
-                  style={{
-                    padding: '14px 18px',
-                    borderBottom: '1px solid var(--gov-border)',
-                    cursor: 'pointer',
-                    background: isSelected ? '#f0f9ff' : '#ffffff',
-                    borderLeft: isSelected ? '4px solid var(--gov-blue)' : '4px solid transparent',
-                    transition: 'background 0.15s ease'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                        <span className={`gov-badge ${st.type === 'NH' ? 'gov-badge-red' : st.type === 'SH' ? 'gov-badge-amber' : 'gov-badge-blue'}`} style={{ fontSize: '10px' }}>
-                          {st.type === 'NH' ? 'National Highway' : st.type === 'SH' ? 'State Highway' : 'Major District Road'}
-                        </span>
-                        <span className={`gov-badge ${st.status === 'surveyed' ? 'gov-badge-green' : 'gov-badge-amber'}`} style={{ fontSize: '10px' }}>
-                          {st.status === 'surveyed' ? 'Audited' : 'Needs Survey'}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-text-primary)' }}>
-                        {st.name}
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px', display: 'flex', gap: '14px' }}>
-                        <span>Length: <strong>{st.distanceKm} km</strong></span>
-                        <span>Speed Limit: <strong>{st.recommendedSpeed}</strong></span>
-                        <span>PCI: <strong>{st.avgPci}/100</strong></span>
-                      </div>
+          {loading ? (
+            <div style={{ padding: '32px', textAlign: 'center', color: 'var(--gov-text-muted)', fontSize: '13px' }}>
+              Loading stretches...
+            </div>
+          ) : tasks.length === 0 ? (
+            <div style={{ padding: '36px 20px', textAlign: 'center' }}>
+              <Route size={32} color="var(--gov-text-muted)" style={{ margin: '0 auto 10px' }} />
+              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-text-primary)' }}>No Stretches Assigned Yet</div>
+              <p style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '4px', maxWidth: '360px', margin: '4px auto 14px' }}>
+                Tasks dispatched by the official desk will appear here, or you can manually define a stretch to scan.
+              </p>
+              <button
+                className="gov-btn-primary"
+                onClick={() => setShowDefineModal(true)}
+                style={{ fontSize: '13px', padding: '8px 14px' }}
+              >
+                <Plus size={14} />
+                <span>Define New Stretch</span>
+              </button>
+            </div>
+          ) : (
+            <div>
+              {tasks.map((t) => {
+                const isSelected = selectedTask?.id === t.id;
+                return (
+                  <div
+                    key={t.id}
+                    onClick={() => setSelectedTask(t)}
+                    style={{
+                      padding: '14px 18px',
+                      borderBottom: '1px solid var(--gov-border)',
+                      cursor: 'pointer',
+                      background: isSelected ? '#f0f9ff' : '#ffffff',
+                      borderLeft: isSelected ? '4px solid var(--gov-blue)' : '4px solid transparent'
+                    }}
+                  >
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-text-primary)' }}>{t.road_name || t.title}</div>
+                    <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '3px' }}>
+                      {t.start_address} → {t.end_address}
                     </div>
-                    <ChevronRight size={18} color={isSelected ? 'var(--gov-blue)' : 'var(--gov-text-muted)'} />
+                    <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
+                      Target Speed: {t.target_speed_kmh || 25} km/h
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        <div className="gov-card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--gov-border)', background: 'var(--gov-card-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Navigation size={18} color="var(--gov-blue)" />
-              <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-navy)' }}>
-                Stretch Navigation & Overview
-              </span>
-            </div>
-            <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', fontWeight: 600 }}>
-              Inspection Guidance
-            </div>
-          </div>
-
-          <div style={{ padding: '18px', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ background: '#f8fafc', border: '1px solid var(--gov-border)', padding: '16px', borderRadius: 'var(--radius-sm)' }}>
-              <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>
-                {selectedStretch.name}
+        {selectedTask && (
+          <div className="gov-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ borderBottom: '1px solid var(--gov-border)', paddingBottom: '12px' }}>
+              <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                {selectedTask.road_name || selectedTask.title}
               </div>
-              <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '6px', lineHeight: 1.5 }}>
-                Official highway classification under Public Works Department jurisdiction. Survey vehicles must maintain uniform speeds between <strong>15 km/h and 30 km/h</strong> for optimal road surface defect tracking.
+              <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
+                {selectedTask.start_address} to {selectedTask.end_address}
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <div style={{ background: '#ffffff', border: '1px solid var(--gov-border)', padding: '12px', borderRadius: 'var(--radius-sm)' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Survey Stretch Distance</div>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-text-primary)', marginTop: '2px' }}>{selectedStretch.distanceKm} KM</div>
-              </div>
-              <div style={{ background: '#ffffff', border: '1px solid var(--gov-border)', padding: '12px', borderRadius: 'var(--radius-sm)' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Recommended Vehicle Speed</div>
-                <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-blue)', marginTop: '2px' }}>{selectedStretch.recommendedSpeed}</div>
-              </div>
-              <div style={{ background: '#ffffff', border: '1px solid var(--gov-border)', padding: '12px', borderRadius: 'var(--radius-sm)' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Last Official Survey</div>
-                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '4px' }}>{selectedStretch.lastSurveyDate}</div>
-              </div>
-              <div style={{ background: '#ffffff', border: '1px solid var(--gov-border)', padding: '12px', borderRadius: 'var(--radius-sm)' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Pavement Rating</div>
-                <div style={{ fontSize: '14px', fontWeight: 700, color: selectedStretch.avgPci >= 80 ? 'var(--gov-green)' : 'var(--gov-amber)', marginTop: '4px' }}>
-                  {selectedStretch.avgPci}/100 ({selectedStretch.avgPci >= 80 ? 'Good' : 'Satisfactory'})
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div style={{ background: 'var(--gov-card-subtle)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Target Survey Speed</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--gov-blue)', marginTop: '2px' }}>
+                  {selectedTask.target_speed_kmh || 25} km/h
                 </div>
               </div>
-            </div>
-
-            <div style={{ background: '#fef3c7', border: '1px solid #fde68a', padding: '12px 14px', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-              <Info size={18} color="var(--gov-amber)" style={{ flexShrink: 0, marginTop: '2px' }} />
-              <div style={{ fontSize: '12px', color: '#92400e', lineHeight: 1.4 }}>
-                <strong>Survey Protocol Notice:</strong> Raw survey telemetry and hazard detection logs are cryptographically immutable. Surveyors can review all historical inspections but cannot alter or delete defect logs.
+              <div style={{ background: 'var(--gov-card-subtle)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Inspection Status</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-amber)', marginTop: '4px' }}>
+                  Ready to Scan
+                </div>
               </div>
             </div>
 
@@ -280,23 +245,93 @@ export default function SurveyorDashboard() {
               <button
                 className="gov-btn-secondary"
                 style={{ flex: 1 }}
-                onClick={() => alert(`Navigating vehicle to start point of ${selectedStretch.name}`)}
+                onClick={() => alert(`Opening navigation to ${selectedTask.start_address}`)}
               >
-                <Compass size={16} />
-                <span>Navigate to Start Point</span>
+                <Compass size={15} />
+                <span>Navigate to Start</span>
               </button>
               <button
                 className="gov-btn-primary"
-                style={{ flex: 1.3 }}
-                onClick={() => alert(`Starting pre-flight checks for ${selectedStretch.name}...`)}
+                style={{ flex: 1.2 }}
+                onClick={() => alert(`Starting survey on ${selectedTask.road_name || selectedTask.title}`)}
               >
-                <Play size={16} fill="#ffffff" />
-                <span>Begin Survey Run</span>
+                <Play size={15} fill="#ffffff" />
+                <span>Launch Survey</span>
               </button>
             </div>
           </div>
-        </div>
+        )}
       </div>
+
+      {showDefineModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+          <div className="gov-card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
+            <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '14px' }}>
+              Define Road Stretch
+            </h2>
+            <form onSubmit={handleCreateStretch} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Road Name</label>
+                <input
+                  type="text"
+                  className="gov-input"
+                  placeholder="e.g. Ring Road Section A"
+                  value={newRoadName}
+                  onChange={(e) => setNewRoadName(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Start Location</label>
+                <input
+                  type="text"
+                  className="gov-input"
+                  placeholder="Start point or Landmark"
+                  value={startPoint}
+                  onChange={(e) => setStartPoint(e.target.value)}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>End Location</label>
+                <input
+                  type="text"
+                  className="gov-input"
+                  placeholder="End point or Landmark"
+                  value={endPoint}
+                  onChange={(e) => setEndPoint(e.target.value)}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Target Speed (km/h)</label>
+                <select
+                  value={targetSpeed}
+                  onChange={(e) => setTargetSpeed(e.target.value)}
+                  className="gov-input"
+                >
+                  <option value="20">20 km/h (Urban / Arterial)</option>
+                  <option value="25">25 km/h (State Highway)</option>
+                  <option value="30">30 km/h (National Highway Bypass)</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <button
+                  type="button"
+                  className="gov-btn-secondary"
+                  onClick={() => setShowDefineModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="gov-btn-primary"
+                >
+                  Save Stretch
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
