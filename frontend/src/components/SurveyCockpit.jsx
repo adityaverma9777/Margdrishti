@@ -46,27 +46,34 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const [fcwActive, setFcwActive] = useState(false);
   useEffect(() => {
     let active = true;
-    const initEngine = async () => {
+    const checkStatus = async () => {
       const gpuHealth = await checkGpuServerHealth();
       if (!active) return;
       if (gpuHealth && gpuHealth.online) {
         setGpuServerOnline(true);
         setEngineReady(true);
       } else {
-        try {
-          const m = await tf.loadGraphModel('/model/model.json');
-          if (active) {
-            setLocalModel(m);
-            setEngineReady(true);
+        setGpuServerOnline(false);
+        if (!localModel) {
+          try {
+            const m = await tf.loadGraphModel('/model/model.json');
+            if (active) {
+              setLocalModel(m);
+              setEngineReady(true);
+            }
+          } catch {
+            if (active) setEngineReady(true);
           }
-        } catch {
-          if (active) setEngineReady(true);
         }
       }
     };
-    initEngine();
-    return () => { active = false; };
-  }, []);
+    checkStatus();
+    const interval = setInterval(checkStatus, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [localModel]);
   const playAlertChime = useCallback((freq = 880) => {
     if (!soundEnabled) return;
     const now = Date.now();

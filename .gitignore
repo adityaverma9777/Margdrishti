@@ -11,6 +11,11 @@ Thumbs.db
 *.mp4
 demo_scans/
 *.log
-*.mp4
-demo_scans/
-*.log
+__pycache__/
+**/__pycache__/
+*.pyc
+backend/weights/*.pt
+backend/weights/*.safetensors
+backend/weights/.cache/
+backend/yolo_config/
+already implemented.md

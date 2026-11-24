@@ -18,6 +18,7 @@ export default function ScanDemoModal({ onClose }) {
   const [vehiclesCount, setVehiclesCount] = useState(0);
   const [fcwActive, setFcwActive] = useState(false);
   const [gpuServerOnline, setGpuServerOnline] = useState(false);
+  const [isWakingUp, setIsWakingUp] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const videoRef = useRef(null);
@@ -32,20 +33,29 @@ export default function ScanDemoModal({ onClose }) {
   const stoppedRef = useRef(false);
   useEffect(() => {
     let active = true;
-    const initEngine = async () => {
+    const checkStatus = async () => {
       const gpuHealth = await checkGpuServerHealth();
       if (!active) return;
       if (gpuHealth && gpuHealth.online) {
         setGpuServerOnline(true);
+        setIsWakingUp(false);
       } else {
-        try {
-          const m = await tf.loadGraphModel('/model/model.json');
-          if (active) localModelRef.current = m;
-        } catch {}
+        setGpuServerOnline(false);
+        setIsWakingUp(Boolean(gpuHealth?.wakingUp));
+        if (!localModelRef.current) {
+          try {
+            const m = await tf.loadGraphModel('/model/model.json');
+            if (active) localModelRef.current = m;
+          } catch {}
+        }
       }
     };
-    initEngine();
-    return () => { active = false; };
+    checkStatus();
+    const interval = setInterval(checkStatus, 2500);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, []);
   const playAlertChime = useCallback((freq = 880) => {
     if (!soundEnabled) return;
@@ -135,13 +145,13 @@ export default function ScanDemoModal({ onClose }) {
               ctx.lineTo(poly[i][0] * w, poly[i][1] * h);
             }
             ctx.closePath();
-            ctx.fillStyle = 'rgba(10, 132, 255, 0.28)';
+            ctx.fillStyle = 'rgba(10, 132, 255, 0.30)';
             ctx.fill();
           });
         }
         if (laneLines.length > 0) {
-          ctx.strokeStyle = 'rgba(100, 210, 255, 0.85)';
-          ctx.lineWidth = 3;
+          ctx.strokeStyle = 'rgba(100, 210, 255, 0.90)';
+          ctx.lineWidth = 3.5;
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
           laneLines.forEach(line => {
@@ -170,7 +180,7 @@ export default function ScanDemoModal({ onClose }) {
               vh = (veh.bbox.h / 360) * h;
             }
             const bracketColor = veh.color || '#30D158';
-            const bracketLen = Math.min(20, Math.min(vw, vh) * 0.35);
+            const bracketLen = Math.min(22, Math.min(vw, vh) * 0.35);
             ctx.strokeStyle = bracketColor;
             ctx.lineWidth = veh.alert_level === 'warning' ? 3.5 : 2.5;
             ctx.beginPath();
@@ -241,7 +251,7 @@ export default function ScanDemoModal({ onClose }) {
             ctx.fillText(tagText, bx + 6, Math.max(14, by - 6));
           });
         }
-        if (!isInferringRef.current && now - lastInferTimeRef.current > 110 && video.readyState >= 2 && !video.paused) {
+        if (!isInferringRef.current && now - lastInferTimeRef.current > 100 && video.readyState >= 2 && !video.paused) {
           isInferringRef.current = true;
           lastInferTimeRef.current = now;
           try {
@@ -294,6 +304,9 @@ export default function ScanDemoModal({ onClose }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Activity size={18} color="#38bdf8" />
           <span style={{ fontSize: '15px', fontWeight: 800, color: '#f8fafc' }}>StreetIQ Vision</span>
+          <span style={{ fontSize: '11px', background: gpuServerOnline ? 'rgba(34, 197, 94, 0.2)' : 'rgba(234, 179, 8, 0.2)', color: gpuServerOnline ? '#4ade80' : '#facc15', border: `1px solid ${gpuServerOnline ? 'rgba(34, 197, 94, 0.4)' : 'rgba(234, 179, 8, 0.4)'}`, padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
+            {gpuServerOnline ? 'Cloud Tri-Layer Engine Online' : isWakingUp ? 'Waking up Cloud Engine...' : 'Connecting to Cloud Engine...'}
+          </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#020617', padding: '4px', borderRadius: '8px', border: '1px solid #1e293b' }}>
           {DEMO_VIDEOS.map((v) => {
