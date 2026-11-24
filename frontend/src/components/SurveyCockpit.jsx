@@ -4,7 +4,6 @@ import * as tf from '@tensorflow/tfjs';
 import { supabase } from '../supabaseClient';
 import { checkGpuServerHealth, predictFrameGpu } from '../utils/gpuService';
 import { runInference, parseYoloOutputAll } from '../utils/tfjsParser';
-
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -18,7 +17,6 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
-
 export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -29,7 +27,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const lastAlertTimeRef = useRef(0);
   const prevCoordsRef = useRef(null);
   const lastDetectionsRef = useRef([]);
-
   const [localModel, setLocalModel] = useState(null);
   const [gpuServerOnline, setGpuServerOnline] = useState(false);
   const [engineReady, setEngineReady] = useState(false);
@@ -44,7 +41,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const [distanceKm, setDistanceKm] = useState(0);
   const [telemetryHistory, setTelemetryHistory] = useState([]);
   const [speedAlert, setSpeedAlert] = useState(false);
-
   useEffect(() => {
     let active = true;
     const initEngine = async () => {
@@ -68,7 +64,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     initEngine();
     return () => { active = false; };
   }, []);
-
   const playAlertChime = useCallback(() => {
     if (!soundEnabled) return;
     const now = Date.now();
@@ -93,7 +88,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       osc.stop(ctx.currentTime + 0.2);
     } catch {}
   }, [soundEnabled]);
-
   useEffect(() => {
     stoppedRef.current = false;
     let localStream = initialStream;
@@ -111,7 +105,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       }
     };
     startCamera();
-
     let watchId = null;
     if ('geolocation' in navigator) {
       watchId = navigator.geolocation.watchPosition(
@@ -123,12 +116,10 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           const calculatedSpeedKmh = rawSpeed !== null && rawSpeed !== undefined && rawSpeed >= 0
             ? Math.round(rawSpeed * 3.6 * 10) / 10
             : 0;
-
           setCurrentSpeed(calculatedSpeedKmh);
           setSpeedAlert(calculatedSpeedKmh > (targetSpeed + 10));
           setUserLocation([lat, lon]);
           setGpsAccuracy(Math.round(pos.coords.accuracy || 2));
-
           if (prevCoordsRef.current) {
             const distIncrement = haversineDistance(
               prevCoordsRef.current.lat,
@@ -146,12 +137,10 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
         { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
       );
     }
-
     const timer = setInterval(() => {
       if (stoppedRef.current) return;
       setElapsedSeconds(s => s + 1);
     }, 1000);
-
     return () => {
       stoppedRef.current = true;
       clearInterval(timer);
@@ -159,9 +148,21 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       if (localStream) localStream.getTracks().forEach(t => t.stop());
     };
   }, [initialStream, targetSpeed]);
-
+  const isNearStretch = useCallback((loc) => {
+    if (!loc || !task?.route_points) return true;
+    let pts = task.route_points;
+    if (typeof pts === 'string') {
+      try { pts = JSON.parse(pts); } catch { pts = null; }
+    }
+    if (!Array.isArray(pts) || pts.length === 0) return true;
+    for (let i = 0; i < pts.length; i++) {
+      const d = haversineDistance(loc[0], loc[1], pts[i][0], pts[i][1]) * 1000;
+      if (d <= 150) return true;
+    }
+    return false;
+  }, [task?.route_points]);
   const saveRealHazardToDb = useCallback(async (detection, imageBlob) => {
-    if (!userLocation) return;
+    if (!userLocation || !isNearStretch(userLocation)) return;
     try {
       const hazardPayload = {
         type: detection.className || 'pothole',
@@ -174,8 +175,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       };
       await supabase.from('hazards').insert([hazardPayload]);
     } catch {}
-  }, [userLocation, gpuServerOnline]);
-
+  }, [userLocation, gpuServerOnline, isNearStretch]);
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -183,20 +183,17 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     let animId;
     let isInferring = false;
     let lastInferTime = 0;
-
     const inferenceAndRenderLoop = async (now) => {
       if (stoppedRef.current) return;
       const ctx = canvas.getContext('2d');
       const w = canvas.width;
       const h = canvas.height;
-
       if (video.readyState >= 2) {
         ctx.drawImage(video, 0, 0, w, h);
       } else {
         ctx.fillStyle = '#0f172a';
         ctx.fillRect(0, 0, w, h);
       }
-
       ctx.fillStyle = 'rgba(10, 132, 255, 0.16)';
       ctx.beginPath();
       ctx.moveTo(w * 0.38, h * 0.52);
@@ -205,19 +202,16 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       ctx.lineTo(w * 0.12, h);
       ctx.closePath();
       ctx.fill();
-
       ctx.strokeStyle = 'rgba(100, 210, 255, 0.8)';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(w * 0.38, h * 0.52);
       ctx.lineTo(w * 0.12, h);
       ctx.stroke();
-
       ctx.beginPath();
       ctx.moveTo(w * 0.62, h * 0.52);
       ctx.lineTo(w * 0.88, h);
       ctx.stroke();
-
       if (!isInferring && now - lastInferTime > 120 && video.readyState >= 2) {
         isInferring = true;
         lastInferTime = now;
@@ -237,9 +231,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             if (Array.isArray(preds)) preds.forEach(t => t.dispose());
             else preds.dispose();
           }
-
           lastDetectionsRef.current = currentDetections;
-
           if (currentDetections.length > 0) {
             playAlertChime();
             let newPotholes = 0;
@@ -257,7 +249,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
               other: prev.other + newOther,
               total: prev.total + currentDetections.length
             }));
-
             const offCanvas = offscreenCanvasRef.current;
             offCanvas.width = 640;
             offCanvas.height = 360;
@@ -269,7 +260,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
         } catch {}
         isInferring = false;
       }
-
       const activeDetections = lastDetectionsRef.current;
       if (activeDetections && activeDetections.length > 0) {
         activeDetections.forEach(d => {
@@ -287,17 +277,14 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             bw = (bwRaw / 640) * w;
             bh = (bhRaw / 640) * h;
           }
-
           const label = d.displayLabel || d.className || 'Hazard';
           const isPothole = label.toLowerCase().includes('pothole');
           const boxColor = isPothole ? '#dc2626' : '#d97706';
-
           ctx.strokeStyle = boxColor;
           ctx.lineWidth = 2.5;
           ctx.strokeRect(bx, by, bw, bh);
           ctx.fillStyle = isPothole ? 'rgba(220, 38, 38, 0.15)' : 'rgba(217, 119, 6, 0.15)';
           ctx.fillRect(bx, by, bw, bh);
-
           const tagText = `${label} (${Math.round(d.confidence * 100)}%)`;
           ctx.font = 'bold 11px Inter, sans-serif';
           const tagW = ctx.measureText(tagText).width + 10;
@@ -307,14 +294,11 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           ctx.fillText(tagText, bx + 5, Math.max(12, by - 5));
         });
       }
-
       animId = requestAnimationFrame(inferenceAndRenderLoop);
     };
-
     animId = requestAnimationFrame(inferenceAndRenderLoop);
     return () => cancelAnimationFrame(animId);
   }, [engineReady, gpuServerOnline, localModel, playAlertChime, saveRealHazardToDb]);
-
   useEffect(() => {
     const interval = setInterval(() => {
       if (stoppedRef.current) return;
@@ -330,7 +314,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     }, 1000);
     return () => clearInterval(interval);
   }, [currentSpeed, elapsedSeconds]);
-
   useEffect(() => {
     const canvas = graphCanvasRef.current;
     if (!canvas) return;
@@ -338,10 +321,8 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
-
     ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 1;
     for (let y = 20; y < h; y += 25) {
@@ -350,16 +331,13 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       ctx.lineTo(w - 10, y);
       ctx.stroke();
     }
-
     ctx.fillStyle = '#64748b';
     ctx.font = '10px Inter, sans-serif';
     ctx.fillText('40 km/h', 2, 25);
     ctx.fillText('20 km/h', 2, 60);
     ctx.fillText('0', 14, 95);
-
     if (telemetryHistory.length > 1) {
       const stepX = (w - 50) / Math.max(1, telemetryHistory.length - 1);
-
       ctx.strokeStyle = '#0284c7';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
@@ -371,7 +349,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
         else ctx.lineTo(x, y);
       });
       ctx.stroke();
-
       telemetryHistory.forEach((pt, i) => {
         if (pt.hazardCount > 0) {
           const x = 40 + i * stepX;
@@ -383,7 +360,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       });
     }
   }, [telemetryHistory]);
-
   const handleStopSurvey = async () => {
     stoppedRef.current = true;
     const finalTrip = {
@@ -403,7 +379,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     } catch {}
     onFinish();
   };
-
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0f172a', zIndex: 2000, display: 'flex', flexDirection: 'column', color: '#ffffff' }}>
       <div style={{ background: '#1e293b', borderBottom: '1px solid #334155', padding: '10px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -422,7 +397,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             </div>
           </div>
         </div>
-
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
@@ -442,18 +416,21 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           </button>
         </div>
       </div>
-
       <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000000', overflow: 'hidden' }}>
         <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
         <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-
         {speedAlert && (
           <div style={{ position: 'absolute', top: 16, background: 'rgba(220, 38, 38, 0.92)', color: '#ffffff', padding: '8px 20px', borderRadius: '8px', fontSize: '14px', fontWeight: 800, letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <AlertTriangle size={18} />
             <span>REDUCE SPEED — TARGET IS {targetSpeed} KM/H</span>
           </div>
         )}
-
+        {!isNearStretch(userLocation) && task?.route_points && (
+          <div style={{ position: 'absolute', top: speedAlert ? 60 : 16, background: 'rgba(234, 88, 12, 0.92)', color: '#ffffff', padding: '8px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertTriangle size={18} />
+            <span>OUTSIDE STRETCH VICINITY — DEFECT LOGGING PAUSED</span>
+          </div>
+        )}
         <div style={{ position: 'absolute', bottom: 14, left: 16, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', padding: '8px 14px', borderRadius: '8px', border: '1px solid #334155', display: 'flex', gap: '16px', fontSize: '12px' }}>
           <div>
             <span style={{ color: '#94a3b8' }}>Distance:</span> <strong style={{ color: '#ffffff' }}>{distanceKm} KM</strong>
@@ -469,7 +446,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           </div>
         </div>
       </div>
-
       <div style={{ background: '#ffffff', borderTop: '1px solid #cbd5e1', padding: '12px 18px', color: '#0f172a' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.5px' }}>

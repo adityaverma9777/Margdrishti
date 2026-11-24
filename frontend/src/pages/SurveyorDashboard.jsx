@@ -6,6 +6,30 @@ import PreFlightModal from '../components/PreFlightModal';
 import SurveyCockpit from '../components/SurveyCockpit';
 import SurveyorTrackMap from '../components/SurveyorTrackMap';
 import TurnByTurnNavModal from '../components/TurnByTurnNavModal';
+function getTaskStartPoint(task) {
+  if (!task) return null;
+  let pts = task.route_points;
+  if (typeof pts === 'string') {
+    try { pts = JSON.parse(pts); } catch { pts = null; }
+  }
+  if (Array.isArray(pts) && pts.length > 0) return pts[0];
+  return null;
+}
+function calculateDirectDistanceMeters(a, b) {
+  if (!a || !b) return null;
+  const R = 6371000;
+  const phi1 = (a[0] * Math.PI) / 180;
+  const phi2 = (b[0] * Math.PI) / 180;
+  const deltaPhi = ((b[0] - a[0]) * Math.PI) / 180;
+  const deltaLambda = ((b[1] - a[1]) * Math.PI) / 180;
+  const s = Math.sin(deltaPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s)));
+}
+function formatDistanceLabel(m) {
+  if (m === null || m === undefined) return '';
+  if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
+  return `${Math.round(m)} m`;
+}
 export default function SurveyorDashboard() {
   const { currentUser } = useAuth();
   const [tasks, setTasks] = useState([]);
@@ -24,6 +48,9 @@ export default function SurveyorDashboard() {
   const [userLocation, setUserLocation] = useState(null);
   const [trackPoints, setTrackPoints] = useState([]);
   const prevCoordsRef = useRef(null);
+  const taskStartPoint = getTaskStartPoint(selectedTask);
+  const distanceToStartM = (userLocation && taskStartPoint) ? calculateDirectDistanceMeters(userLocation, taskStartPoint) : null;
+  const isInStartVicinity = distanceToStartM !== null ? distanceToStartM <= 100 : false;
   const loadSurveyData = async () => {
     setLoading(true);
     try {
@@ -37,14 +64,14 @@ export default function SurveyorDashboard() {
           setSelectedTask(dbTasks[0]);
         }
       }
-    } catch {}
+    } catch { }
     try {
       const { data: dbTrips } = await supabase
         .from('survey_trips')
         .select('*')
         .order('created_at', { ascending: false });
       if (dbTrips) setTrips(dbTrips);
-    } catch {}
+    } catch { }
     setLoading(false);
   };
   useEffect(() => {
@@ -67,7 +94,7 @@ export default function SurveyorDashboard() {
           return [...prev, [lat, lng]];
         });
       },
-      () => {},
+      () => { },
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
@@ -87,7 +114,7 @@ export default function SurveyorDashboard() {
     };
     try {
       await supabase.from('survey_tasks').insert([newTask]);
-    } catch {}
+    } catch { }
     const updated = [newTask, ...tasks];
     setTasks(updated);
     setSelectedTask(newTask);
@@ -122,13 +149,24 @@ export default function SurveyorDashboard() {
             <Plus size={15} />
             <span>Define Stretch</span>
           </button>
-          <button
-            className="gov-btn-primary"
-            onClick={() => setShowPreFlight(true)}
-          >
-            <Play size={15} fill="#ffffff" />
-            <span>Start Survey</span>
-          </button>
+          {isInStartVicinity || !selectedTask ? (
+            <button
+              className="gov-btn-primary"
+              onClick={() => setShowPreFlight(true)}
+            >
+              <Play size={15} fill="#ffffff" />
+              <span>Start Survey</span>
+            </button>
+          ) : (
+            <button
+              className="gov-btn-primary"
+              onClick={() => setIsNavigatingToStart(true)}
+              style={{ background: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Compass size={15} />
+              <span>Navigate to Start {distanceToStartM !== null ? `(${formatDistanceLabel(distanceToStartM)})` : ''}</span>
+            </button>
+          )}
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
@@ -263,31 +301,47 @@ export default function SurveyorDashboard() {
                   {selectedTask.target_speed_kmh || 25} km/h
                 </div>
               </div>
-              <div style={{ background: 'var(--gov-card-subtle)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Inspection Status</div>
-                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gov-amber)', marginTop: '4px' }}>
-                  Ready to Scan
+              <div style={{ background: isInStartVicinity ? '#f0fdf4' : '#fef2f2', padding: '12px', borderRadius: 'var(--radius-sm)', border: isInStartVicinity ? '1px solid #bbf7d0' : '1px solid #fecaca' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: isInStartVicinity ? '#16a34a' : '#dc2626', textTransform: 'uppercase' }}>Inspection Status</div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: isInStartVicinity ? '#16a34a' : '#dc2626', marginTop: '4px' }}>
+                  {isInStartVicinity ? `In 100m Zone (${distanceToStartM !== null ? distanceToStartM + 'm' : 'Ready'})` : `Locked (${distanceToStartM !== null ? formatDistanceLabel(distanceToStartM) + ' away' : 'Outside 100m'})`}
                 </div>
               </div>
             </div>
-            <div style={{ paddingTop: '4px', borderTop: '1px solid var(--gov-border)', display: 'flex', gap: '10px' }}>
-              <button
-                className="gov-btn-secondary"
-                style={{ flex: 1 }}
-                onClick={() => setIsNavigatingToStart(true)}
-              >
-                <Compass size={15} />
-                <span>Navigate to Start</span>
-              </button>
-              <button
-                className="gov-btn-primary"
-                style={{ flex: 1.2 }}
-                onClick={() => setShowPreFlight(true)}
-              >
-                <Play size={15} fill="#ffffff" />
-                <span>Launch Survey</span>
-              </button>
-            </div>
+            {isInStartVicinity ? (
+              <div style={{ paddingTop: '8px', borderTop: '1px solid var(--gov-border)', display: 'flex', gap: '10px' }}>
+                <button
+                  className="gov-btn-secondary"
+                  style={{ flex: 1 }}
+                  onClick={() => setIsNavigatingToStart(true)}
+                >
+                  <Compass size={15} />
+                  <span>View Route Map</span>
+                </button>
+                <button
+                  className="gov-btn-primary"
+                  style={{ flex: 1.4, background: '#16a34a', borderColor: '#16a34a' }}
+                  onClick={() => setShowPreFlight(true)}
+                >
+                  <Play size={15} fill="#ffffff" />
+                  <span>Launch Survey (In Zone)</span>
+                </button>
+              </div>
+            ) : (
+              <div style={{ paddingTop: '8px', borderTop: '1px solid var(--gov-border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  className="gov-btn-primary"
+                  style={{ width: '100%', background: '#1e3a8a', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                  onClick={() => setIsNavigatingToStart(true)}
+                >
+                  <Compass size={16} />
+                  <span>Navigate to Starting Point {distanceToStartM !== null ? `(${formatDistanceLabel(distanceToStartM)} away)` : ''}</span>
+                </button>
+                <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)', textAlign: 'center' }}>
+                  Vehicle must reach within 100m of Point A before scan mode & AI defect detections are unlocked.
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -364,6 +418,8 @@ export default function SurveyorDashboard() {
         <PreFlightModal
           roadName={selectedTask?.road_name || selectedTask?.title || 'Road Inspection Run'}
           targetSpeed={selectedTask?.target_speed_kmh || 25}
+          task={selectedTask}
+          userLocation={userLocation}
           onClose={() => setShowPreFlight(false)}
           onPassed={(stream) => {
             setShowPreFlight(false);

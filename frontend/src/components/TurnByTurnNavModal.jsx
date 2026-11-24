@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { X, Volume2, VolumeX, Navigation, LocateFixed, Play, CheckCircle, Flag, AlertTriangle } from 'lucide-react';
+import { X, Volume2, VolumeX, LocateFixed, Play, Flag, RefreshCw } from 'lucide-react';
 import { useNavigation } from '../hooks/useNavigation';
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_OPTS = { subdomains: ['a', 'b', 'c'], maxZoom: 19, attribution: '' };
@@ -38,6 +38,7 @@ export default function TurnByTurnNavModal({ task, userLocation, onClose, onLaun
   const vehicleMarkerRef = useRef(null);
   const routeLayerRef = useRef(null);
   const stretchLayerRef = useRef(null);
+  const zoneCircleRef = useRef(null);
   const lastSpokenInstructionRef = useRef('');
   const stretchPoints = parseCoords(task?.route_points);
   const destinationCoord = stretchPoints ? stretchPoints[0] : null;
@@ -47,9 +48,12 @@ export default function TurnByTurnNavModal({ task, userLocation, onClose, onLaun
     nextStep,
     maneuverIcon,
     isLoading,
+    isRerouting,
     error,
     distanceToNext,
     remainingDistanceM,
+    distanceToStartPoint,
+    isInStartVicinity,
     eta,
     heading,
     arrived,
@@ -127,11 +131,19 @@ export default function TurnByTurnNavModal({ task, userLocation, onClose, onLaun
       opacity: 0.85
     }).addTo(stretchLayerRef.current);
     const startPt = stretchPoints[0];
+    zoneCircleRef.current = L.circle(startPt, {
+      radius: 100,
+      color: '#16a34a',
+      fillColor: '#22c55e',
+      fillOpacity: 0.15,
+      weight: 2,
+      dashArray: '4 4'
+    }).addTo(stretchLayerRef.current);
     const flagIcon = L.divIcon({
       className: '',
-      html: `<div style="background:#0f172a;color:#fff;padding:4px 8px;border-radius:14px;font-size:11px;font-weight:800;border:2px solid #f59e0b;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;gap:4px"><span>🏁</span><span>START</span></div>`,
-      iconSize: [68, 24],
-      iconAnchor: [34, 12]
+      html: `<div style="background:#0f172a;color:#fff;padding:4px 8px;border-radius:14px;font-size:11px;font-weight:800;border:2px solid #22c55e;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;gap:4px"><span>🏁</span><span>START (100m Zone)</span></div>`,
+      iconSize: [120, 24],
+      iconAnchor: [60, 12]
     });
     L.marker(startPt, { icon: flagIcon, zIndexOffset: 800 }).addTo(stretchLayerRef.current);
   }, [stretchPoints]);
@@ -148,10 +160,6 @@ export default function TurnByTurnNavModal({ task, userLocation, onClose, onLaun
       weight: 5,
       opacity: 1
     }).addTo(routeLayerRef.current);
-    if (!destinationCoord) {
-      const bounds = L.latLngBounds(route);
-      mapRef.current.fitBounds(bounds, { padding: [80, 80] });
-    }
   }, [route]);
   useEffect(() => {
     if (!mapRef.current || !userLocation) return;
@@ -196,22 +204,27 @@ export default function TurnByTurnNavModal({ task, userLocation, onClose, onLaun
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: '#0f172a', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ position: 'absolute', top: 14, left: 14, right: 14, zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 8, pointerEvents: 'none' }}>
-        <div style={{ background: arrived ? '#0f5132' : '#137333', borderRadius: '18px', padding: '16px 20px', color: '#ffffff', boxShadow: '0 12px 32px rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', gap: 16, pointerEvents: 'auto', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.15)' }}>
+        <div style={{ background: isInStartVicinity ? '#0f5132' : isRerouting ? '#854d0e' : '#137333', borderRadius: '18px', padding: '16px 20px', color: '#ffffff', boxShadow: '0 12px 32px rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', gap: 16, pointerEvents: 'auto', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.15)', transition: 'background 0.3s ease' }}>
           <div style={{ width: 56, height: 56, borderRadius: '16px', background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px', fontWeight: 800, flexShrink: 0, boxShadow: 'inset 0 0 8px rgba(0,0,0,0.15)' }}>
-            {arrived ? '🏁' : maneuverIcon}
+            {isInStartVicinity ? '🏁' : isRerouting ? <RefreshCw size={28} className="spin" /> : maneuverIcon}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            {isLoading ? (
+            {isRerouting ? (
+              <div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#fef08a' }}>Rerouting Vehicle...</div>
+                <div style={{ fontSize: '13px', color: '#fef9c3', marginTop: '2px' }}>Recalculating shortest path to starting point</div>
+              </div>
+            ) : isLoading ? (
               <div style={{ fontSize: '16px', fontWeight: 700, color: '#e2e8f0' }}>Calculating shortest route...</div>
             ) : error ? (
               <div>
                 <div style={{ fontSize: '16px', fontWeight: 800, color: '#fca5a5' }}>Routing Notice</div>
                 <div style={{ fontSize: '13px', color: '#fecaca', marginTop: '2px' }}>{error}</div>
               </div>
-            ) : arrived ? (
+            ) : isInStartVicinity ? (
               <div>
-                <div style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '-0.3px' }}>Arrived at Start Point</div>
-                <div style={{ fontSize: '13px', color: '#bbf7d0', marginTop: '2px' }}>Stretch: {task?.road_name || task?.title}</div>
+                <div style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '-0.3px', color: '#86efac' }}>Inside 100m Start Zone</div>
+                <div style={{ fontSize: '13px', color: '#f0fdf4', marginTop: '2px' }}>{distanceToStartPoint !== null ? `${distanceToStartPoint}m from Point A` : 'Start point reached'} • Ready to Scan</div>
               </div>
             ) : (
               <div>
@@ -285,36 +298,31 @@ export default function TurnByTurnNavModal({ task, userLocation, onClose, onLaun
                 </span>
               </div>
               <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>
-                Arrival: <strong>{calculateArrivalTime(eta)}</strong> • Target: {task?.target_speed_kmh || 25} km/h
+                Arrival: <strong>{calculateArrivalTime(eta)}</strong> • Start Point: <strong>{formatDistance(distanceToStartPoint)} away</strong>
               </div>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {arrived ? (
+            {isInStartVicinity ? (
               <button
                 onClick={onLaunchSurvey}
                 className="gov-btn-primary"
-                style={{ padding: '12px 20px', fontSize: '14px', fontWeight: 800, background: '#16a34a', borderColor: '#16a34a', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 14px rgba(22,163,74,0.4)' }}
+                style={{ padding: '12px 22px', fontSize: '14px', fontWeight: 800, background: '#16a34a', borderColor: '#16a34a', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 16px rgba(22,163,74,0.45)' }}
               >
                 <Play size={16} fill="#ffffff" />
-                <span>Launch Survey Now</span>
+                <span>Start Survey (In Zone)</span>
               </button>
             ) : (
               <>
+                <div style={{ padding: '8px 14px', background: '#f1f5f9', color: '#475569', borderRadius: '10px', fontSize: '12px', fontWeight: 700, border: '1px solid #cbd5e1' }}>
+                  En Route ({formatDistance(distanceToStartPoint)} to 100m Zone)
+                </div>
                 <button
                   onClick={onClose}
                   className="gov-btn-secondary"
                   style={{ padding: '10px 16px', fontSize: '13px' }}
                 >
                   Exit
-                </button>
-                <button
-                  onClick={onLaunchSurvey}
-                  className="gov-btn-primary"
-                  style={{ padding: '10px 18px', fontSize: '13px' }}
-                >
-                  <Play size={14} fill="#ffffff" />
-                  <span>Start Survey</span>
                 </button>
               </>
             )}

@@ -2,7 +2,10 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 const OSRM_BASE = 'https://router.project-osrm.org';
 const INDIA_TRAFFIC_FACTOR = 1.8;
 const STEP_ADVANCE_RADIUS_M = 30;
+const OFF_ROUTE_THRESHOLD_M = 50;
+const REROUTE_DEBOUNCE_MS = 4000;
 function haversine(a, b) {
+  if (!a || !b) return Infinity;
   const R = 6371000;
   const phi1 = (a[0] * Math.PI) / 180;
   const phi2 = (b[0] * Math.PI) / 180;
@@ -10,6 +13,15 @@ function haversine(a, b) {
   const deltaLambda = ((b[1] - a[1]) * Math.PI) / 180;
   const s = Math.sin(deltaPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+function minDistanceToPolyline(point, polyline) {
+  if (!point || !polyline || polyline.length === 0) return 0;
+  let minD = Infinity;
+  for (let i = 0; i < polyline.length; i++) {
+    const d = haversine(point, polyline[i]);
+    if (d < minD) minD = d;
+  }
+  return minD;
 }
 function getManeuverIcon(maneuver) {
   if (!maneuver) return '↑';
@@ -58,9 +70,11 @@ export function useNavigation(userLocation, speedKmh = 0) {
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   const [isNavigating, setIsNavigating] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRerouting, setIsRerouting] = useState(false);
   const [error, setError] = useState(null);
   const [distanceToNext, setDistanceToNext] = useState(null);
   const [remainingDistanceM, setRemainingDistanceM] = useState(null);
+  const [distanceToStartPoint, setDistanceToStartPoint] = useState(null);
   const [eta, setEta] = useState(null);
   const [heading, setHeading] = useState(null);
   const [arrived, setArrived] = useState(false);
@@ -68,7 +82,12 @@ export function useNavigation(userLocation, speedKmh = 0) {
   const currentIdxRef = useRef(0);
   const compassWatchRef = useRef(null);
   const smoothedEtaRef = useRef(null);
+  const destinationRef = useRef(null);
+  const routeRef = useRef(null);
+  const lastRerouteTimeRef = useRef(0);
+  const isReroutingRef = useRef(false);
   const fetchRoute = useCallback(async (start, end) => {
+    destinationRef.current = end;
     setIsLoading(true);
     setError(null);
     setArrived(false);
@@ -105,9 +124,12 @@ export function useNavigation(userLocation, speedKmh = 0) {
         duration: Math.round(rawDuration * INDIA_TRAFFIC_FACTOR)
       };
       setRoute(geometry);
+      routeRef.current = geometry;
       setSteps(extractedSteps);
       setRouteData(routeResult);
       stepsRef.current = extractedSteps;
+      currentIdxRef.current = 0;
+      setCurrentStepIdx(0);
       setEta(Math.max(1, Math.round(routeResult.duration / 60)));
       setRemainingDistanceM(routeResult.distance);
       if (extractedSteps.length > 0) {
@@ -119,6 +141,8 @@ export function useNavigation(userLocation, speedKmh = 0) {
       return null;
     } finally {
       setIsLoading(false);
+      setIsRerouting(false);
+      isReroutingRef.current = false;
     }
   }, []);
   const startNavigation = useCallback(() => {
@@ -148,6 +172,7 @@ export function useNavigation(userLocation, speedKmh = 0) {
   const stopNavigation = useCallback(() => {
     setIsNavigating(false);
     setRoute(null);
+    routeRef.current = null;
     setRouteData(null);
     setSteps([]);
     stepsRef.current = [];
@@ -155,9 +180,13 @@ export function useNavigation(userLocation, speedKmh = 0) {
     currentIdxRef.current = 0;
     setDistanceToNext(null);
     setRemainingDistanceM(null);
+    setDistanceToStartPoint(null);
     setEta(null);
     setHeading(null);
     setArrived(false);
+    setIsRerouting(false);
+    isReroutingRef.current = false;
+    destinationRef.current = null;
     smoothedEtaRef.current = null;
     if (compassWatchRef.current) {
       compassWatchRef.current();
@@ -165,9 +194,32 @@ export function useNavigation(userLocation, speedKmh = 0) {
     }
   }, []);
   useEffect(() => {
+    if (!userLocation || !destinationRef.current) return;
+    const directDist = Math.round(haversine(userLocation, destinationRef.current));
+    setDistanceToStartPoint(directDist);
+    if (directDist <= 35) {
+      setArrived(true);
+    }
+  }, [userLocation]);
+  useEffect(() => {
     if (!isNavigating || !userLocation) return;
     const currentSteps = stepsRef.current;
     if (!currentSteps.length) return;
+    if (routeRef.current && routeRef.current.length > 0 && destinationRef.current && !isReroutingRef.current) {
+      const offRouteDist = minDistanceToPolyline(userLocation, routeRef.current);
+      const now = Date.now();
+      if (offRouteDist > OFF_ROUTE_THRESHOLD_M && now - lastRerouteTimeRef.current > REROUTE_DEBOUNCE_MS) {
+        lastRerouteTimeRef.current = now;
+        isReroutingRef.current = true;
+        setIsRerouting(true);
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(new SpeechSynthesisUtterance('Rerouting to start point'));
+        }
+        fetchRoute(userLocation, destinationRef.current);
+        return;
+      }
+    }
     const idx = currentIdxRef.current;
     if (idx >= currentSteps.length) {
       setArrived(true);
@@ -218,7 +270,7 @@ export function useNavigation(userLocation, speedKmh = 0) {
         setEta(Math.max(1, Math.round(staticRemaining / 60)));
       }
     }
-  }, [userLocation, speedKmh, isNavigating]);
+  }, [userLocation, speedKmh, isNavigating, fetchRoute]);
   useEffect(() => {
     if (!isNavigating) return;
     const gpsBearing = (pos) => {
@@ -234,6 +286,7 @@ export function useNavigation(userLocation, speedKmh = 0) {
   const currentStep = steps[currentStepIdx] || null;
   const nextStep = steps[currentStepIdx + 1] || null;
   const maneuverIcon = getManeuverIcon(currentStep?.maneuver);
+  const isInStartVicinity = distanceToStartPoint !== null && distanceToStartPoint <= 100;
   return {
     route,
     routeData,
@@ -244,9 +297,12 @@ export function useNavigation(userLocation, speedKmh = 0) {
     maneuverIcon,
     isNavigating,
     isLoading,
+    isRerouting,
     error,
     distanceToNext,
     remainingDistanceM,
+    distanceToStartPoint,
+    isInStartVicinity,
     eta,
     heading,
     arrived,

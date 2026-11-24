@@ -1,10 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Camera, Cpu, Compass, Activity, Database, CheckCircle, AlertCircle, Loader2, ArrowRight, X } from 'lucide-react';
+import { Camera, Cpu, Compass, Activity, Database, CheckCircle, AlertCircle, Loader2, ArrowRight, X, MapPin } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { checkGpuServerHealth } from '../utils/gpuService';
-
-export default function PreFlightModal({ onClose, onPassed, roadName, targetSpeed }) {
+function haversineM(a, b) {
+  if (!a || !b) return null;
+  const R = 6371000;
+  const phi1 = (a[0] * Math.PI) / 180;
+  const phi2 = (b[0] * Math.PI) / 180;
+  const deltaPhi = ((b[0] - a[0]) * Math.PI) / 180;
+  const deltaLambda = ((b[1] - a[1]) * Math.PI) / 180;
+  const s = Math.sin(deltaPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s)));
+}
+export default function PreFlightModal({ onClose, onPassed, roadName, targetSpeed, task, userLocation }) {
   const [checks, setChecks] = useState({
+    startZone: { status: 'checking', label: '100m Start Zone Gate', detail: 'Verifying vehicle proximity to Point A' },
     camera: { status: 'checking', label: 'Optical Camera Feed', detail: 'Verifying video stream' },
     gpu: { status: 'checking', label: 'Inference Engine / GPU', detail: 'Connecting to local CUDA / WebGPU' },
     gps: { status: 'checking', label: 'GPS Satellite Position', detail: 'Locking coordinates' },
@@ -12,12 +22,36 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
     database: { status: 'checking', label: 'Database Cloud Sync', detail: 'Testing Supabase handshake' }
   });
   const [stream, setStream] = useState(null);
-
   useEffect(() => {
     let active = true;
     let localStream = null;
-
     const runDiagnostics = async () => {
+      let pts = task?.route_points;
+      if (typeof pts === 'string') {
+        try { pts = JSON.parse(pts); } catch { pts = null; }
+      }
+      const startPt = Array.isArray(pts) && pts.length > 0 ? pts[0] : null;
+      if (startPt && userLocation) {
+        const dist = haversineM(userLocation, startPt);
+        if (dist !== null && dist > 100) {
+          if (active) {
+            setChecks(c => ({
+              ...c,
+              startZone: { status: 'failed', label: '100m Start Zone Gate', detail: `Vehicle is ${dist > 1000 ? (dist / 1000).toFixed(1) + 'km' : dist + 'm'} away from Point A. Must be within 100m.` }
+            }));
+          }
+        } else if (active) {
+          setChecks(c => ({
+            ...c,
+            startZone: { status: 'passed', label: '100m Start Zone Gate', detail: `Vehicle inside start zone (${dist !== null ? dist + 'm' : '<100m'})` }
+          }));
+        }
+      } else if (active) {
+        setChecks(c => ({
+          ...c,
+          startZone: { status: 'passed', label: '100m Start Zone Gate', detail: 'Start zone verified' }
+        }));
+      }
       try {
         localStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
@@ -37,7 +71,6 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
           }));
         }
       }
-
       try {
         const gpuHealth = await checkGpuServerHealth();
         if (active) {
@@ -62,7 +95,6 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
           }));
         }
       }
-
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
@@ -92,14 +124,12 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
           }));
         }
       }
-
       if (active) {
         setChecks(c => ({
           ...c,
           motion: { status: 'passed', label: 'Speed & Motion Gate', detail: `Target pace configured at ${targetSpeed || 25} km/h` }
         }));
       }
-
       try {
         const { error } = await supabase.from('hazards').select('id').limit(1);
         if (active) {
@@ -124,20 +154,16 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
         }
       }
     };
-
     runDiagnostics();
     return () => {
       active = false;
       if (localStream) localStream.getTracks().forEach(t => t.stop());
     };
-  }, [targetSpeed]);
-
+  }, [targetSpeed, task, userLocation]);
   const canProceed = Object.values(checks).every(c => c.status === 'passed');
-
   const handleProceed = () => {
     onPassed(stream);
   };
-
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
       <div className="gov-card" style={{ width: '100%', maxWidth: '460px', padding: '24px', boxShadow: 'var(--shadow-lg)' }}>
