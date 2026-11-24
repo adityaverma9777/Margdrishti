@@ -48,6 +48,8 @@ export default function OfficialDashboard() {
   const [taskPriority, setTaskPriority] = useState('routine');
   const [taskDistanceKm, setTaskDistanceKm] = useState(0);
   const [taskRoutePoints, setTaskRoutePoints] = useState(null);
+  const [routeConfirmedBanner, setRouteConfirmedBanner] = useState(null);
+  const [dispatchAlert, setDispatchAlert] = useState(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -114,6 +116,38 @@ export default function OfficialDashboard() {
     setTaskStretchName(routeInfo.roadName);
     setTaskDistanceKm(routeInfo.distanceKm);
     setTaskRoutePoints(routeInfo.routePoints);
+    setRouteConfirmedBanner(`✓ Route locked: "${routeInfo.roadName}" (${routeInfo.distanceKm} KM). Ready to dispatch.`);
+  };
+
+  const handleInstantDispatch = async (routeInfo) => {
+    if (!selectedVehicle) return;
+    const stretchTitle = routeInfo?.roadName || taskStretchName;
+    if (!stretchTitle) return;
+    const newTask = {
+      title: stretchTitle,
+      road_name: stretchTitle,
+      assigned_vehicle_id: selectedVehicle.id,
+      assigned_vehicle_number: selectedVehicle.vehicle_number,
+      target_speed_kmh: Number(taskSpeed) || 25,
+      official_notes: taskNotes || 'Audit requested via Official Console',
+      priority: taskPriority || 'routine',
+      distance_km: routeInfo?.distanceKm || taskDistanceKm || 0,
+      route_points: routeInfo?.routePoints || taskRoutePoints || null,
+      state: selectedState,
+      start_address: `${selectedState} Stretch Start`,
+      end_address: `${selectedState} Stretch End`
+    };
+    await dispatchTask(newTask);
+    setShowAssignModal(false);
+    setTaskStretchName('');
+    setTaskNotes('');
+    setTaskDistanceKm(0);
+    setTaskRoutePoints(null);
+    setRouteConfirmedBanner(null);
+    setDispatchAlert(`Stretch "${stretchTitle}" successfully dispatched to ${selectedVehicle.vehicle_number}!`);
+    setTimeout(() => setDispatchAlert(null), 5000);
+    const tasks = await fetchSurveyTasks(selectedVehicle.id);
+    setVehicleTasks(tasks);
   };
 
   const handleAssignTask = async (e) => {
@@ -123,6 +157,7 @@ export default function OfficialDashboard() {
       title: taskStretchName,
       road_name: taskStretchName,
       assigned_vehicle_id: selectedVehicle.id,
+      assigned_vehicle_number: selectedVehicle.vehicle_number,
       target_speed_kmh: Number(taskSpeed) || 25,
       official_notes: taskNotes,
       priority: taskPriority,
@@ -138,6 +173,9 @@ export default function OfficialDashboard() {
     setTaskNotes('');
     setTaskDistanceKm(0);
     setTaskRoutePoints(null);
+    setRouteConfirmedBanner(null);
+    setDispatchAlert(`Stretch "${taskStretchName}" successfully dispatched to ${selectedVehicle.vehicle_number}!`);
+    setTimeout(() => setDispatchAlert(null), 5000);
     const tasks = await fetchSurveyTasks(selectedVehicle.id);
     setVehicleTasks(tasks);
   };
@@ -215,6 +253,13 @@ export default function OfficialDashboard() {
           </button>
         </div>
       </div>
+
+      {dispatchAlert && (
+        <div style={{ marginBottom: '18px', padding: '12px 16px', background: '#dcfce7', border: '1px solid #86efac', borderRadius: 'var(--radius-sm)', color: '#166534', fontSize: '13px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Check size={16} color="#16a34a" />
+          <span>{dispatchAlert}</span>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '22px' }}>
         <div className="gov-card" style={{ padding: '18px' }}>
@@ -781,8 +826,24 @@ export default function OfficialDashboard() {
               <StretchPlannerMap
                 selectedState={selectedState}
                 onRouteConfirmed={handleRouteConfirmedFromMap}
+                onInstantDispatch={handleInstantDispatch}
               />
             </div>
+
+            {routeConfirmedBanner && (
+              <div style={{ padding: '10px 14px', background: '#dcfce7', border: '1px solid #86efac', borderRadius: 'var(--radius-sm)', color: '#166534', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                <span>{routeConfirmedBanner}</span>
+                <button
+                  type="button"
+                  className="gov-btn-primary"
+                  onClick={() => handleInstantDispatch()}
+                  style={{ padding: '6px 14px', fontSize: '12px', background: '#166534' }}
+                >
+                  <Send size={13} />
+                  <span>Dispatch Now</span>
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleAssignTask} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 2fr) 1fr 1fr', gap: '12px' }}>

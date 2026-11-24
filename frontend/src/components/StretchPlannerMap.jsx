@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Route, PenTool, RotateCcw, Check, Zap } from 'lucide-react';
-import { STATE_COORDINATES, fetchCommuterRoutes, calculatePathDistance } from '../utils/routingEngine';
+import { Route, PenTool, RotateCcw, Check, Zap, Navigation, Send } from 'lucide-react';
+import { STATE_COORDINATES, fetchCommuterRoutes, calculatePathDistance, detectRoadNetworkFromPoints } from '../utils/routingEngine';
 
 const TILE_VOYAGER = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_DARK = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
@@ -25,12 +25,12 @@ const endIcon = L.divIcon({
 
 const waypointIcon = L.divIcon({
   className: '',
-  html: '<div style="width:10px;height:10px;background:#38bdf8;border:2px solid #fff;border-radius:50%;box-shadow:0 0 6px #0284c7"></div>',
-  iconSize: [10, 10],
-  iconAnchor: [5, 5]
+  html: '<div style="width:12px;height:12px;background:#0284c7;border:2px solid #fff;border-radius:50%;box-shadow:0 0 6px rgba(2,132,199,0.8)"></div>',
+  iconSize: [12, 12],
+  iconAnchor: [6, 6]
 });
 
-export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConfirmed }) {
+export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConfirmed, onInstantDispatch }) {
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);
   const tileRef = useRef(null);
@@ -50,6 +50,9 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
   const [calculating, setCalculating] = useState(false);
   const [drawnPoints, setDrawnPoints] = useState([]);
   const [drawnDistance, setDrawnDistance] = useState(0);
+  const [detectedRoad, setDetectedRoad] = useState(null);
+  const [detectingRoad, setDetectingRoad] = useState(false);
+  const [confirmedInfo, setConfirmedInfo] = useState(null);
 
   planModeRef.current = planMode;
   startPointRef.current = startPoint;
@@ -71,19 +74,19 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
     tileRef.current = L.tileLayer(TILE_VOYAGER, TILE_OPTS).addTo(map);
     overlayRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
-    map.on('click', e => {
+    map.on('click', async e => {
       const coords = [e.latlng.lat, e.latlng.lng];
+      setConfirmedInfo(null);
       if (planModeRef.current === 'commuter') {
         if (!startPointRef.current) {
           setStartPoint(coords);
         } else if (!endPointRef.current) {
           setEndPoint(coords);
           setCalculating(true);
-          fetchCommuterRoutes(startPointRef.current, coords).then(routes => {
-            setCommuterRoutes(routes);
-            setSelectedRouteIdx(0);
-            setCalculating(false);
-          });
+          const routes = await fetchCommuterRoutes(startPointRef.current, coords);
+          setCommuterRoutes(routes);
+          setSelectedRouteIdx(0);
+          setCalculating(false);
         } else {
           setStartPoint(coords);
           setEndPoint(null);
@@ -94,6 +97,15 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
         const next = [...drawnPointsRef.current, coords];
         setDrawnPoints(next);
         setDrawnDistance(calculatePathDistance(next));
+        if (next.length >= 2) {
+          setDetectingRoad(true);
+          const road = await detectRoadNetworkFromPoints(next);
+          if (road) {
+            setDetectedRoad(road);
+            setDrawnDistance(road.distanceKm);
+          }
+          setDetectingRoad(false);
+        }
       }
     });
     map.whenReady(() => setTimeout(() => map.invalidateSize(), 50));
@@ -124,25 +136,47 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
     if (planMode === 'commuter' && commuterRoutes.length > 0) {
       commuterRoutes.forEach((route, i) => {
         const isSel = selectedRouteIdx === i;
+        if (isSel) {
+          L.polyline(route.geometry, {
+            color: '#ffffff',
+            weight: 9,
+            opacity: 0.6
+          }).addTo(overlayRef.current);
+        }
         L.polyline(route.geometry, {
           color: isSel ? route.color : '#94a3b8',
           weight: isSel ? 6 : 3.5,
           opacity: isSel ? 1 : 0.55,
           dashArray: isSel ? undefined : '7 5'
-        }).on('click', () => setSelectedRouteIdx(i)).addTo(overlayRef.current);
+        }).on('click', () => {
+          setSelectedRouteIdx(i);
+          setConfirmedInfo(null);
+        }).addTo(overlayRef.current);
       });
     }
     if (planMode === 'draw') {
       drawnPoints.forEach(pt => L.marker(pt, { icon: waypointIcon }).addTo(overlayRef.current));
-      if (drawnPoints.length > 1) {
+      if (detectedRoad && detectedRoad.geometry && detectedRoad.geometry.length > 1) {
+        L.polyline(detectedRoad.geometry, {
+          color: '#ffffff',
+          weight: 9,
+          opacity: 0.65
+        }).addTo(overlayRef.current);
+        L.polyline(detectedRoad.geometry, {
+          color: '#0284c7',
+          weight: 6,
+          opacity: 0.95
+        }).addTo(overlayRef.current);
+      } else if (drawnPoints.length > 1) {
         L.polyline(drawnPoints, {
           color: '#38bdf8',
-          weight: 5,
-          opacity: 0.95
+          weight: 4,
+          opacity: 0.85,
+          dashArray: '6 6'
         }).addTo(overlayRef.current);
       }
     }
-  }, [startPoint, endPoint, commuterRoutes, selectedRouteIdx, planMode, drawnPoints]);
+  }, [startPoint, endPoint, commuterRoutes, selectedRouteIdx, planMode, drawnPoints, detectedRoad]);
 
   useEffect(() => {
     return () => {
@@ -160,19 +194,33 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
     setSelectedRouteIdx(0);
     setDrawnPoints([]);
     setDrawnDistance(0);
+    setDetectedRoad(null);
+    setConfirmedInfo(null);
   };
 
-  const handleUndo = () => {
+  const handleUndo = async () => {
     const next = drawnPoints.slice(0, -1);
     setDrawnPoints(next);
-    setDrawnDistance(calculatePathDistance(next));
+    setConfirmedInfo(null);
+    if (next.length >= 2) {
+      setDetectingRoad(true);
+      const road = await detectRoadNetworkFromPoints(next);
+      if (road) {
+        setDetectedRoad(road);
+        setDrawnDistance(road.distanceKm);
+      }
+      setDetectingRoad(false);
+    } else {
+      setDetectedRoad(null);
+      setDrawnDistance(0);
+    }
   };
 
-  const handleConfirm = () => {
+  const buildCurrentRouteInfo = () => {
     if (planMode === 'commuter') {
       const r = commuterRoutes[selectedRouteIdx];
-      if (!r) return;
-      onRouteConfirmed({
+      if (!r) return null;
+      return {
         roadName: r.title,
         mainRoad: r.mainRoad,
         distanceKm: r.distanceKm,
@@ -181,19 +229,44 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
         startCoords: startPoint,
         endCoords: endPoint,
         state: selectedState
-      });
+      };
     } else {
-      if (drawnPoints.length < 2) return;
-      onRouteConfirmed({
-        roadName: `Custom Stretch (${drawnPoints.length} pts)`,
-        mainRoad: 'Custom Corridor',
-        distanceKm: drawnDistance,
-        durationMin: Math.round((drawnDistance / 25) * 60),
-        routePoints: drawnPoints,
+      if (drawnPoints.length < 2) return null;
+      const roadName = detectedRoad?.title || `Road Stretch (${drawnPoints.length} Waypoints)`;
+      const mainRoad = detectedRoad?.mainRoad || 'Custom Corridor';
+      const distance = detectedRoad?.distanceKm || drawnDistance;
+      const duration = detectedRoad?.durationMin || Math.round((distance / 25) * 60);
+      const geometry = detectedRoad?.geometry || drawnPoints;
+      return {
+        roadName,
+        mainRoad,
+        distanceKm: distance,
+        durationMin: duration,
+        routePoints: geometry,
         startCoords: drawnPoints[0],
         endCoords: drawnPoints[drawnPoints.length - 1],
         state: selectedState
-      });
+      };
+    }
+  };
+
+  const handleConfirm = () => {
+    const routeInfo = buildCurrentRouteInfo();
+    if (!routeInfo) return;
+    setConfirmedInfo(routeInfo);
+    if (onRouteConfirmed) {
+      onRouteConfirmed(routeInfo);
+    }
+  };
+
+  const handleDispatchDirect = () => {
+    const routeInfo = buildCurrentRouteInfo();
+    if (!routeInfo) return;
+    setConfirmedInfo(routeInfo);
+    if (onInstantDispatch) {
+      onInstantDispatch(routeInfo);
+    } else if (onRouteConfirmed) {
+      onRouteConfirmed(routeInfo);
     }
   };
 
@@ -232,7 +305,7 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
             }}
           >
             <PenTool size={15} />
-            <span>Draw Road Stretch</span>
+            <span>Draw Road Stretch (Road Snapping)</span>
           </button>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -273,30 +346,43 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
         />
         <div style={{
           position: 'absolute', top: 10, left: 10, zIndex: 1000,
-          background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(6px)',
-          padding: '7px 11px', borderRadius: '6px', border: '1px solid var(--gov-border)',
-          fontSize: '12px', boxShadow: 'var(--shadow-sm)', maxWidth: '320px'
+          background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(6px)',
+          padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--gov-border)',
+          fontSize: '12px', boxShadow: 'var(--shadow-sm)', maxWidth: '380px'
         }}>
           {planMode === 'commuter' ? (
-            <>
+            <div>
               {!startPoint && <span>Click the map to set <strong>Point A (Start)</strong></span>}
               {startPoint && !endPoint && <span>Click to set <strong>Point B (End)</strong></span>}
-              {startPoint && endPoint && calculating && <span>Fetching OSRM route alternatives…</span>}
-              {startPoint && endPoint && !calculating && commuterRoutes.length > 0 && <span>Select a route below</span>}
-            </>
+              {startPoint && endPoint && calculating && <span>Fetching OSRM commuter route alternatives…</span>}
+              {startPoint && endPoint && !calculating && commuterRoutes.length > 0 && <span>Select a commuter route corridor below</span>}
+            </div>
           ) : (
-            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              Drawing — <strong>{drawnPoints.length} pts · {drawnDistance} km</strong>
-              {drawnPoints.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleUndo}
-                  style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '1px 6px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
-                >
-                  Undo
-                </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Drawing Mode • <strong>{drawnPoints.length} Points</strong></span>
+                {drawnPoints.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleUndo}
+                    style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '1px 6px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
+                  >
+                    Undo
+                  </button>
+                )}
+              </div>
+              {detectingRoad && <div style={{ color: '#0284c7', fontSize: '11px', fontWeight: 600 }}>Detecting road network below points...</div>}
+              {detectedRoad && (
+                <div style={{ fontSize: '11px', color: '#16a34a', fontWeight: 700 }}>
+                  ✓ Detected: {detectedRoad.mainRoad} ({detectedRoad.distanceKm} KM)
+                </div>
               )}
-            </span>
+              {drawnPoints.length < 2 && !detectingRoad && (
+                <div style={{ fontSize: '11px', color: '#64748b' }}>
+                  Click points along roads to trace. System auto-detects underlying roads.
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -304,7 +390,7 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
       {planMode === 'commuter' && commuterRoutes.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--gov-navy)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-            Route Alternatives ({commuterRoutes.length})
+            Commuter Route Alternatives ({commuterRoutes.length})
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '8px' }}>
             {commuterRoutes.map((route, i) => {
@@ -312,7 +398,10 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
               return (
                 <div
                   key={route.id}
-                  onClick={() => setSelectedRouteIdx(i)}
+                  onClick={() => {
+                    setSelectedRouteIdx(i);
+                    setConfirmedInfo(null);
+                  }}
                   style={{
                     padding: '11px 13px', borderRadius: 'var(--radius-sm)',
                     border: `2px solid ${isSel ? route.color : 'var(--gov-border)'}`,
@@ -334,11 +423,42 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
       )}
 
       {canConfirm && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button type="button" className="gov-btn-primary" onClick={handleConfirm} style={{ padding: '9px 18px', fontSize: '13px' }}>
-            <Check size={14} />
-            <span>Confirm & Assign Route</span>
-          </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingTop: '4px' }}>
+          <div style={{ fontSize: '13px', color: confirmedInfo ? '#16a34a' : 'var(--gov-text-secondary)', fontWeight: 600 }}>
+            {confirmedInfo ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <Check size={16} color="#16a34a" />
+                <span>Route Locked: <strong>{confirmedInfo.roadName}</strong> ({confirmedInfo.distanceKm} KM)</span>
+              </span>
+            ) : (
+              <span>Ready to lock and dispatch to vehicle</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              className={confirmedInfo ? 'gov-btn-secondary' : 'gov-btn-primary'}
+              onClick={handleConfirm}
+              style={{
+                padding: '9px 18px', fontSize: '13px',
+                background: confirmedInfo ? '#dcfce7' : undefined,
+                color: confirmedInfo ? '#166534' : undefined,
+                borderColor: confirmedInfo ? '#86efac' : undefined
+              }}
+            >
+              <Check size={14} />
+              <span>{confirmedInfo ? '✓ Route Confirmed' : 'Confirm & Select Route'}</span>
+            </button>
+            <button
+              type="button"
+              className="gov-btn-primary"
+              onClick={handleDispatchDirect}
+              style={{ padding: '9px 18px', fontSize: '13px', background: '#1e3a8a' }}
+            >
+              <Send size={14} />
+              <span>Dispatch to Vehicle</span>
+            </button>
+          </div>
         </div>
       )}
     </div>

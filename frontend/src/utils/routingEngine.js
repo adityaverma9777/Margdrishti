@@ -108,3 +108,53 @@ export async function fetchCommuterRoutes(startCoords, endCoords) {
     }];
   }
 }
+
+export async function detectRoadNetworkFromPoints(points) {
+  if (!points || points.length < 2) return null;
+  const coords = points.map(p => `${p[1]},${p[0]}`).join(';');
+  const url = `${OSRM_BASE}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('OSRM match failed');
+    const data = await res.json();
+    if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+      throw new Error('No road match found');
+    }
+    const r = data.routes[0];
+    const geometry = r.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+    const roadNames = [];
+    if (r.legs) {
+      for (const leg of r.legs) {
+        if (leg.steps) {
+          for (const s of leg.steps) {
+            if (s.name && !roadNames.includes(s.name)) roadNames.push(s.name);
+          }
+        }
+      }
+    }
+    const distKm = Math.round((r.distance / 1000) * 10) / 10;
+    const durationMin = Math.round((r.duration * INDIA_TRAFFIC_FACTOR) / 60);
+    const mainRoad = roadNames[0] || (r.legs && r.legs[0]?.summary) || 'Detected Road Stretch';
+    const fullName = roadNames.length > 0 ? roadNames.join(' → ') : mainRoad;
+    return {
+      snapped: true,
+      geometry,
+      mainRoad,
+      roadNames: fullName,
+      title: `${mainRoad} (${distKm} KM)`,
+      distanceKm: distKm,
+      durationMin: durationMin || Math.round((distKm / 25) * 60)
+    };
+  } catch (err) {
+    const directDist = calculatePathDistance(points);
+    return {
+      snapped: false,
+      geometry: points,
+      mainRoad: 'Direct Field Corridor',
+      roadNames: 'Field Road Axis',
+      title: `Field Stretch (${directDist} KM)`,
+      distanceKm: directDist,
+      durationMin: Math.round((directDist / 25) * 60)
+    };
+  }
+}
