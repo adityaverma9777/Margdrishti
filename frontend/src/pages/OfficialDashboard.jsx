@@ -15,6 +15,7 @@ import {
 } from '../services/officialApi';
 import FleetOverviewMap from '../components/FleetOverviewMap';
 import StretchPlannerMap from '../components/StretchPlannerMap';
+import VehicleTaskStretchMap from '../components/VehicleTaskStretchMap';
 import { STATE_COORDINATES } from '../utils/routingEngine';
 
 const STATE_OPTIONS = Object.keys(STATE_COORDINATES);
@@ -50,6 +51,8 @@ export default function OfficialDashboard() {
   const [taskRoutePoints, setTaskRoutePoints] = useState(null);
   const [routeConfirmedBanner, setRouteConfirmedBanner] = useState(null);
   const [dispatchAlert, setDispatchAlert] = useState(null);
+  const [selectedTaskForMap, setSelectedTaskForMap] = useState(null);
+  const [taskFilterTab, setTaskFilterTab] = useState('all');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -67,9 +70,11 @@ export default function OfficialDashboard() {
       setSelectedVehicle(active);
       const tasks = await fetchSurveyTasks(active.id);
       setVehicleTasks(tasks);
+      setSelectedTaskForMap(tasks.length > 0 ? tasks[0] : null);
     } else {
       setSelectedVehicle(null);
       setVehicleTasks([]);
+      setSelectedTaskForMap(null);
     }
     setLoading(false);
   }, [selectedVehicle, selectedState]);
@@ -82,6 +87,7 @@ export default function OfficialDashboard() {
     setSelectedVehicle(veh);
     const tasks = await fetchSurveyTasks(veh.id);
     setVehicleTasks(tasks);
+    setSelectedTaskForMap(tasks.length > 0 ? tasks[0] : null);
   };
 
   const handleAddVehicle = async (e) => {
@@ -148,6 +154,7 @@ export default function OfficialDashboard() {
     setTimeout(() => setDispatchAlert(null), 5000);
     const tasks = await fetchSurveyTasks(selectedVehicle.id);
     setVehicleTasks(tasks);
+    if (tasks.length > 0) setSelectedTaskForMap(tasks[0]);
   };
 
   const handleAssignTask = async (e) => {
@@ -178,6 +185,7 @@ export default function OfficialDashboard() {
     setTimeout(() => setDispatchAlert(null), 5000);
     const tasks = await fetchSurveyTasks(selectedVehicle.id);
     setVehicleTasks(tasks);
+    if (tasks.length > 0) setSelectedTaskForMap(tasks[0]);
   };
 
   const handleMarkReplyRead = async (taskId) => {
@@ -433,113 +441,256 @@ export default function OfficialDashboard() {
               )}
             </div>
 
-            {selectedVehicle && (
-              <div className="gov-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--gov-border)', paddingBottom: '14px' }}>
-                  <div>
-                    <div style={{ fontSize: '17px', fontWeight: 800, color: 'var(--gov-navy)' }}>
-                      Vehicle {selectedVehicle.vehicle_number}
-                    </div>
-                    <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '2px' }}>
-                      {selectedVehicle.model_name} • Driver: {selectedVehicle.driver_name} • Division: {selectedVehicle.jurisdiction_name || selectedState}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      className="gov-btn-primary"
-                      onClick={() => setShowAssignModal(true)}
-                      style={{ padding: '7px 14px', fontSize: '12px' }}
-                    >
-                      <Send size={13} />
-                      <span>Define & Dispatch Stretch</span>
-                    </button>
-                    <button
-                      className="gov-btn-secondary"
-                      onClick={() => handleDeleteVehicle(selectedVehicle.id)}
-                      style={{ padding: '7px 10px', fontSize: '12px', color: 'var(--gov-red)' }}
-                      title="Decommission vehicle"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
+            {selectedVehicle && (() => {
+              const pendingTasks = vehicleTasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
+              const completedTasks = vehicleTasks.filter(t => t.status === 'completed');
+              const displayedTasks = taskFilterTab === 'pending' ? pendingTasks : taskFilterTab === 'completed' ? completedTasks : vehicleTasks;
+              const activeTaskForDisplay = selectedTaskForMap || (vehicleTasks.length > 0 ? vehicleTasks[0] : null);
 
-                <div style={{ background: 'var(--gov-card-subtle)', padding: '12px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
-                  <div>
-                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Crew Members</div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
-                      {Array.isArray(selectedVehicle.crew_members) ? selectedVehicle.crew_members.join(', ') : selectedVehicle.driver_name}
+              return (
+                <div className="gov-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--gov-border)', paddingBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                          Vehicle {selectedVehicle.vehicle_number}
+                        </span>
+                        <span className={`gov-badge ${selectedVehicle.status === 'in_survey' ? 'gov-badge-green' : 'gov-badge-neutral'}`} style={{ fontSize: '11px' }}>
+                          {selectedVehicle.status === 'in_survey' ? 'Scanning Active' : 'Idle / Standby'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '3px' }}>
+                        {selectedVehicle.model_name} • Driver: <strong>{selectedVehicle.driver_name}</strong> • Division: {selectedVehicle.jurisdiction_name || selectedState}
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Distance Logged</div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
-                      {Number(selectedVehicle.total_distance_km || 0).toFixed(1)} KM
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        className="gov-btn-primary"
+                        onClick={() => setShowAssignModal(true)}
+                        style={{ padding: '8px 14px', fontSize: '12px' }}
+                      >
+                        <Send size={13} />
+                        <span>Define & Dispatch Stretch</span>
+                      </button>
+                      <button
+                        className="gov-btn-secondary"
+                        onClick={() => handleDeleteVehicle(selectedVehicle.id)}
+                        style={{ padding: '8px 10px', fontSize: '12px', color: 'var(--gov-red)' }}
+                        title="Decommission vehicle"
+                      >
+                        <X size={13} />
+                      </button>
                     </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Defects Logged</div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
-                      {selectedVehicle.defects_logged || 0} Points
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--gov-navy)', marginBottom: '10px' }}>
-                    Dispatched Tasks ({vehicleTasks.length})
                   </div>
 
-                  {vehicleTasks.length === 0 ? (
-                    <div style={{ padding: '24px', textAlign: 'center', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
-                      <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)' }}>No survey tasks dispatched to this unit yet.</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
+                    <div style={{ padding: '12px', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Total Assigned</div>
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--gov-navy)', marginTop: '2px' }}>
+                        {vehicleTasks.length}
+                      </div>
                     </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {vehicleTasks.map((t) => (
-                        <div key={t.id} style={{ background: '#ffffff', border: '1px solid var(--gov-border)', borderRadius: 'var(--radius-sm)', padding: '12px 14px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-text-primary)' }}>{t.road_name || t.title}</span>
-                            <span className={`gov-badge ${t.status === 'completed' ? 'gov-badge-green' : t.status === 'in_progress' ? 'gov-badge-blue' : 'gov-badge-neutral'}`} style={{ fontSize: '11px' }}>
-                              {t.status}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-                            Target Speed: {t.target_speed_kmh} km/h • Priority: {t.priority || 'routine'} {t.distance_km ? `• Length: ${t.distance_km} KM` : ''}
-                          </div>
-                          {t.official_notes && (
-                            <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px', fontStyle: 'italic' }}>
-                              Notes: "{t.official_notes}"
-                            </div>
-                          )}
-                          {t.surveyor_reply && (
-                            <div style={{ marginTop: '8px', padding: '8px 10px', background: t.reply_unread_by_official ? '#fef2f2' : '#f8fafc', border: `1px solid ${t.reply_unread_by_official ? '#fecaca' : '#e2e8f0'}`, borderRadius: '4px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: '11px', fontWeight: 700, color: t.reply_unread_by_official ? '#dc2626' : '#64748b' }}>
-                                  Crew Feedback {t.reply_unread_by_official && '(NEW)'}:
-                                </span>
-                                {t.reply_unread_by_official && (
-                                  <button
-                                    onClick={() => handleMarkReplyRead(t.id)}
-                                    style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                                  >
-                                    <Check size={12} />
-                                    <span>Mark Read</span>
-                                  </button>
-                                )}
-                              </div>
-                              <div style={{ fontSize: '12px', color: '#0f172a', marginTop: '2px' }}>
-                                {t.surveyor_reply}
-                              </div>
-                            </div>
-                          )}
+                    <div style={{ padding: '12px', background: '#eff6ff', borderRadius: 'var(--radius-sm)', border: '1px solid #bfdbfe' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#2563eb', textTransform: 'uppercase' }}>Pending Tasks</div>
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: '#2563eb', marginTop: '2px' }}>
+                        {pendingTasks.length}
+                      </div>
+                    </div>
+                    <div style={{ padding: '12px', background: '#f0fdf4', borderRadius: 'var(--radius-sm)', border: '1px solid #bbf7d0' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#16a34a', textTransform: 'uppercase' }}>Total Tasks Done</div>
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: '#16a34a', marginTop: '2px' }}>
+                        {completedTasks.length}
+                      </div>
+                    </div>
+                    <div style={{ padding: '12px', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--gov-text-muted)', textTransform: 'uppercase' }}>Distance Logged</div>
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--gov-text-primary)', marginTop: '2px' }}>
+                        {Number(selectedVehicle.total_distance_km || 0).toFixed(1)} <span style={{ fontSize: '12px', fontWeight: 600 }}>KM</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#ffffff', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)', padding: '12px 14px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', fontSize: '12px' }}>
+                    <div>
+                      <span style={{ color: 'var(--gov-text-muted)' }}>Crew Members: </span>
+                      <strong style={{ color: 'var(--gov-text-primary)' }}>
+                        {Array.isArray(selectedVehicle.crew_members) ? selectedVehicle.crew_members.join(', ') : selectedVehicle.driver_name}
+                      </strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--gov-text-muted)' }}>Defects Logged: </span>
+                      <strong style={{ color: 'var(--gov-red)' }}>{selectedVehicle.defects_logged || 0} Points</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--gov-text-muted)' }}>Jurisdiction: </span>
+                      <strong style={{ color: 'var(--gov-text-primary)' }}>{selectedVehicle.jurisdiction_name || selectedState}</strong>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <div>
+                        <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                          Stretch Route Map in Detail
+                        </span>
+                        <div style={{ fontSize: '11px', color: 'var(--gov-text-secondary)' }}>
+                          {activeTaskForDisplay ? `Displaying geometry for: ${activeTaskForDisplay.road_name || activeTaskForDisplay.title}` : 'Select a stretch below to inspect its route coordinates on map'}
                         </div>
-                      ))}
+                      </div>
                     </div>
-                  )}
+                    <VehicleTaskStretchMap
+                      task={activeTaskForDisplay}
+                      vehicle={selectedVehicle}
+                      selectedState={selectedState}
+                      height={270}
+                    />
+                  </div>
+
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                        Vehicle Assigned Stretches ({vehicleTasks.length})
+                      </span>
+                      <div style={{ display: 'flex', gap: '4px', background: '#f1f5f9', padding: '3px', borderRadius: '6px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setTaskFilterTab('all')}
+                          style={{
+                            border: 'none',
+                            padding: '4px 10px',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            background: taskFilterTab === 'all' ? '#ffffff' : 'transparent',
+                            color: taskFilterTab === 'all' ? 'var(--gov-navy)' : 'var(--gov-text-secondary)',
+                            boxShadow: taskFilterTab === 'all' ? 'var(--shadow-sm)' : 'none'
+                          }}
+                        >
+                          All ({vehicleTasks.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTaskFilterTab('pending')}
+                          style={{
+                            border: 'none',
+                            padding: '4px 10px',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            background: taskFilterTab === 'pending' ? '#ffffff' : 'transparent',
+                            color: taskFilterTab === 'pending' ? 'var(--gov-blue)' : 'var(--gov-text-secondary)',
+                            boxShadow: taskFilterTab === 'pending' ? 'var(--shadow-sm)' : 'none'
+                          }}
+                        >
+                          Pending ({pendingTasks.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTaskFilterTab('completed')}
+                          style={{
+                            border: 'none',
+                            padding: '4px 10px',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            background: taskFilterTab === 'completed' ? '#ffffff' : 'transparent',
+                            color: taskFilterTab === 'completed' ? 'var(--gov-green)' : 'var(--gov-text-secondary)',
+                            boxShadow: taskFilterTab === 'completed' ? 'var(--shadow-sm)' : 'none'
+                          }}
+                        >
+                          Done ({completedTasks.length})
+                        </button>
+                      </div>
+                    </div>
+
+                    {displayedTasks.length === 0 ? (
+                      <div style={{ padding: '24px', textAlign: 'center', background: 'var(--gov-card-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--gov-border)' }}>
+                        <div style={{ fontSize: '13px', color: 'var(--gov-text-secondary)' }}>
+                          No {taskFilterTab === 'all' ? 'assigned' : taskFilterTab} tasks for this vehicle.
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {displayedTasks.map((t) => {
+                          const isSelectedForMap = activeTaskForDisplay?.id === t.id;
+                          return (
+                            <div
+                              key={t.id}
+                              onClick={() => setSelectedTaskForMap(t)}
+                              style={{
+                                background: isSelectedForMap ? '#f0f9ff' : '#ffffff',
+                                border: `1.5px solid ${isSelectedForMap ? 'var(--gov-blue)' : 'var(--gov-border)'}`,
+                                borderRadius: 'var(--radius-sm)',
+                                padding: '12px 14px',
+                                cursor: 'pointer',
+                                transition: 'border-color 0.15s ease'
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '14px', fontWeight: 800, color: isSelectedForMap ? 'var(--gov-navy)' : 'var(--gov-text-primary)' }}>
+                                    {t.road_name || t.title}
+                                  </span>
+                                  {isSelectedForMap && (
+                                    <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--gov-blue)', background: '#e0f2fe', padding: '2px 6px', borderRadius: '4px' }}>
+                                      Active on Map
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                  <span className={`gov-badge ${t.priority === 'urgent' ? 'gov-badge-red' : t.priority === 'post_monsoon' ? 'gov-badge-amber' : 'gov-badge-neutral'}`} style={{ fontSize: '10px' }}>
+                                    {t.priority || 'routine'}
+                                  </span>
+                                  <span className={`gov-badge ${t.status === 'completed' ? 'gov-badge-green' : t.status === 'in_progress' ? 'gov-badge-blue' : 'gov-badge-neutral'}`} style={{ fontSize: '10px' }}>
+                                    {t.status}
+                                  </span>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: '12px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
+                                Corridor: {t.start_address} → {t.end_address} • Length: <strong>{t.distance_km || 0} KM</strong> • Target Speed: <strong>{t.target_speed_kmh} km/h</strong>
+                              </div>
+                              {t.official_notes && (
+                                <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)', marginTop: '4px', fontStyle: 'italic' }}>
+                                  Official Instructions: "{t.official_notes}"
+                                </div>
+                              )}
+                              {t.surveyor_reply && (
+                                <div style={{ marginTop: '8px', padding: '8px 10px', background: t.reply_unread_by_official ? '#fef2f2' : '#f8fafc', border: `1px solid ${t.reply_unread_by_official ? '#fecaca' : '#e2e8f0'}`, borderRadius: '4px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '11px', fontWeight: 700, color: t.reply_unread_by_official ? '#dc2626' : '#64748b' }}>
+                                      Survey Crew Feedback {t.reply_unread_by_official && '(NEW)'}:
+                                    </span>
+                                    {t.reply_unread_by_official && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleMarkReplyRead(t.id);
+                                        }}
+                                        style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '11px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                                      >
+                                        <Check size={12} />
+                                        <span>Mark Read</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: '#0f172a', marginTop: '2px' }}>
+                                    {t.surveyor_reply}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}
