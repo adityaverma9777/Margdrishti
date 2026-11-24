@@ -4,9 +4,10 @@ import 'leaflet/dist/leaflet.css';
 import { Route, PenTool, RotateCcw, Check, Zap } from 'lucide-react';
 import { STATE_COORDINATES, fetchCommuterRoutes, calculatePathDistance } from '../utils/routingEngine';
 
-const TILE_VOYAGER = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
-const TILE_DARK = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
-const TILE_OPTS = { subdomains: ['a', 'b', 'c', 'd'], maxZoom: 19, attribution: '' };
+const TILE_VOYAGER = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+const TILE_DARK = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+const TILE_OPTS = { subdomains: ['a', 'b', 'c'], maxZoom: 19, attribution: '' };
+const TILE_OPTS_DARK = { maxZoom: 19, attribution: '' };
 
 const startIcon = L.divIcon({
   className: '',
@@ -107,7 +108,7 @@ export default function StretchPlannerMap({ selectedState = 'Assam', onRouteConf
   useEffect(() => {
     if (!mapRef.current || !tileRef.current) return;
     mapRef.current.removeLayer(tileRef.current);
-    tileRef.current = L.tileLayer(darkTile ? TILE_DARK : TILE_VOYAGER, TILE_OPTS).addTo(mapRef.current);
+    tileRef.current = L.tileLayer(darkTile ? TILE_DARK : TILE_VOYAGER, darkTile ? TILE_OPTS_DARK : TILE_OPTS).addTo(mapRef.current);
   }, [darkTile]);
 
   useEffect(() => {

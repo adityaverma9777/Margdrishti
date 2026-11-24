@@ -3,9 +3,9 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { STATE_COORDINATES } from '../utils/routingEngine';
 
-const TILE_URL = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
+const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_OPTS = {
-  subdomains: ['a', 'b', 'c', 'd'],
+  subdomains: ['a', 'b', 'c'],
   maxZoom: 19,
   attribution: ''
 };
