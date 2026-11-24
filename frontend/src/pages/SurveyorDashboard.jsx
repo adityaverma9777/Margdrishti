@@ -95,12 +95,13 @@ export default function SurveyorDashboard() {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         setUserLocation([lat, lng]);
+        if (pos.coords.speed !== null && pos.coords.speed < 0.8) return;
         setTrackPoints(prev => {
           if (prev.length > 0) {
             const last = prev[prev.length - 1];
             const dLat = Math.abs(last[0] - lat);
             const dLng = Math.abs(last[1] - lng);
-            if (dLat < 0.00005 && dLng < 0.00005) return prev;
+            if (dLat < 0.0001 && dLng < 0.0001) return prev;
           }
           return [...prev, [lat, lng]];
         });

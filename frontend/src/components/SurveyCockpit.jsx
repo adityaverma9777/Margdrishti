@@ -113,25 +113,39 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           const lat = pos.coords.latitude;
           const lon = pos.coords.longitude;
           const rawSpeed = pos.coords.speed;
-          const calculatedSpeedKmh = rawSpeed !== null && rawSpeed !== undefined && rawSpeed >= 0
-            ? Math.round(rawSpeed * 3.6 * 10) / 10
-            : 0;
+          const accuracy = Math.round(pos.coords.accuracy || 20);
+          const now = Date.now();
+          let calculatedSpeedKmh = 0;
+          if (rawSpeed !== null && rawSpeed !== undefined && rawSpeed >= 0) {
+            calculatedSpeedKmh = Math.round(rawSpeed * 3.6 * 10) / 10;
+          } else if (prevCoordsRef.current) {
+            const dtSeconds = (now - (prevCoordsRef.current.time || now)) / 1000;
+            const distKm = haversineDistance(prevCoordsRef.current.lat, prevCoordsRef.current.lon, lat, lon);
+            const distMeters = distKm * 1000;
+            if (dtSeconds > 1.0 && distMeters > Math.max(12, accuracy * 0.6)) {
+              calculatedSpeedKmh = Math.round((distKm / (dtSeconds / 3600)) * 10) / 10;
+            }
+          }
+          if (calculatedSpeedKmh < 3) {
+            calculatedSpeedKmh = 0;
+          }
           setCurrentSpeed(calculatedSpeedKmh);
           setSpeedAlert(calculatedSpeedKmh > (targetSpeed + 10));
           setUserLocation([lat, lon]);
-          setGpsAccuracy(Math.round(pos.coords.accuracy || 2));
-          if (prevCoordsRef.current) {
+          setGpsAccuracy(accuracy);
+          if (calculatedSpeedKmh >= 3 && prevCoordsRef.current && accuracy <= 35) {
             const distIncrement = haversineDistance(
               prevCoordsRef.current.lat,
               prevCoordsRef.current.lon,
               lat,
               lon
             );
-            if (distIncrement > 0.002 && distIncrement < 2.0) {
+            const distMeters = distIncrement * 1000;
+            if (distMeters >= 5 && distIncrement < 0.5) {
               setDistanceKm(d => Math.round((d + distIncrement) * 100) / 100);
             }
           }
-          prevCoordsRef.current = { lat, lon };
+          prevCoordsRef.current = { lat, lon, time: now };
         },
         () => {},
         { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
@@ -162,7 +176,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     return false;
   }, [task?.route_points, task?.is_free_drive]);
   const saveRealHazardToDb = useCallback(async (detection, imageBlob) => {
-    if (!userLocation || !isNearStretch(userLocation)) return;
+    if (!userLocation || currentSpeed < 3 || !isNearStretch(userLocation)) return;
     try {
       const hazardPayload = {
         type: detection.className || 'pothole',
@@ -411,8 +425,8 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           >
             {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
           </button>
-          <div style={{ background: speedAlert ? 'rgba(220, 38, 38, 0.25)' : 'rgba(22, 163, 74, 0.25)', border: `1px solid ${speedAlert ? '#dc2626' : '#16a34a'}`, padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, color: speedAlert ? '#f87171' : '#4ade80' }}>
-            {currentSpeed} km/h {speedAlert ? '(Reduce Speed)' : '(Speed Compliant)'}
+          <div style={{ background: speedAlert ? 'rgba(220, 38, 38, 0.25)' : currentSpeed < 3 ? 'rgba(100, 116, 139, 0.25)' : 'rgba(22, 163, 74, 0.25)', border: `1px solid ${speedAlert ? '#dc2626' : currentSpeed < 3 ? '#64748b' : '#16a34a'}`, padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, color: speedAlert ? '#f87171' : currentSpeed < 3 ? '#94a3b8' : '#4ade80' }}>
+            {currentSpeed < 3 ? 'Vehicle Stationary (0 km/h)' : `${currentSpeed} km/h ${speedAlert ? '(Reduce Speed)' : '(Speed Compliant)'}`}
           </div>
           <button
             onClick={handleStopSurvey}
@@ -426,6 +440,12 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000000', overflow: 'hidden' }}>
         <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
         <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        {currentSpeed < 3 && (
+          <div style={{ position: 'absolute', top: 16, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', border: '1px solid #475569', color: '#94a3b8', padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b', display: 'inline-block' }}></span>
+            <span>Vehicle Stationary — Ready to scan once driving begins</span>
+          </div>
+        )}
         {speedAlert && (
           <div style={{ position: 'absolute', top: 16, background: 'rgba(220, 38, 38, 0.92)', color: '#ffffff', padding: '8px 20px', borderRadius: '8px', fontSize: '14px', fontWeight: 800, letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <AlertTriangle size={18} />
