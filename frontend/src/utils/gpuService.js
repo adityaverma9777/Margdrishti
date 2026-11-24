@@ -1,8 +1,6 @@
 const DEFAULT_URL = import.meta.env.VITE_GPU_SERVER_URL || 'http://127.0.0.1:8000';
-
 let cachedHealth = null;
 let lastCheckTime = 0;
-
 export async function checkGpuServerHealth(force = false) {
   const now = Date.now();
   if (!force && cachedHealth && now - lastCheckTime < 10000) {
@@ -24,9 +22,7 @@ export async function checkGpuServerHealth(force = false) {
     return cachedHealth;
   }
 }
-
 const offscreenCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-
 export async function predictFrameGpu(videoOrCanvas, conf = 0.15) {
   if (!offscreenCanvas) return null;
   const vw = videoOrCanvas.videoWidth || videoOrCanvas.width || 640;
@@ -36,11 +32,14 @@ export async function predictFrameGpu(videoOrCanvas, conf = 0.15) {
   const ctx = offscreenCanvas.getContext('2d');
   ctx.drawImage(videoOrCanvas, 0, 0, vw, vh);
   const dataUrl = offscreenCanvas.toDataURL('image/jpeg', 0.85);
-  const res = await fetch(`${DEFAULT_URL}/predict/base64`, {
+  const res = await fetch(`${DEFAULT_URL}/predict/tri_layer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image: dataUrl, confidence: conf }),
   });
   if (!res.ok) throw new Error(`GPU inference failed: ${res.statusText}`);
   return await res.json();
+}
+export async function predictTriLayerGpu(videoOrCanvas, conf = 0.15) {
+  return predictFrameGpu(videoOrCanvas, conf);
 }
