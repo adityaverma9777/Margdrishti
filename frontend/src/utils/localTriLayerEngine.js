@@ -1,7 +1,7 @@
 import * as tf from '@tensorflow/tfjs';
 import * as ort from 'onnxruntime-web';
 import { runInference, parseYoloOutputAll } from './tfjsParser';
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0-dev.20250206-8d5f35d21b/dist/';
+ort.env.wasm.wasmPaths = '/ort/';
 ort.env.wasm.numThreads = 1;
 const VEHICLE_META = {
   0: { name: 'Pedestrian', height: 1.7 },

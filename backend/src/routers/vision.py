@@ -21,20 +21,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 WEIGHTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "weights")
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 PCI_WEIGHTS_PATH = os.path.join(WEIGHTS_DIR, "yolo11l_640_best.pt")
-if not os.path.exists(PCI_WEIGHTS_PATH):
-    from huggingface_hub import hf_hub_download
-    try:
-        PCI_WEIGHTS_PATH = hf_hub_download(repo_id="uzbtrust/smart-road-pci-yolo11", filename="yolo11l_640_best.pt", local_dir=WEIGHTS_DIR)
-    except Exception:
-        PCI_WEIGHTS_PATH = "yolo11n.pt"
 VEHICLE_WEIGHTS_PATH = os.path.join(WEIGHTS_DIR, "yolo11n.pt")
 TWINLITE_WEIGHTS_PATH = os.path.join(WEIGHTS_DIR, "model.safetensors")
-if not os.path.exists(TWINLITE_WEIGHTS_PATH):
-    from huggingface_hub import hf_hub_download
-    try:
-        TWINLITE_WEIGHTS_PATH = hf_hub_download(repo_id="nielsr/twinlitenetplus-nano", filename="model.safetensors", local_dir=WEIGHTS_DIR)
-    except Exception:
-        pass
 PCI_CLASS_MAPPING = {
     0: {"raw": "longitudinal_transverse_crack", "display": "Longitudinal / Transverse Crack", "type": "crack", "severity": 3, "astm": 10},
     1: {"raw": "alligator_crack", "display": "Alligator Crack", "type": "crack", "severity": 4, "astm": 1},
@@ -53,16 +41,38 @@ VEHICLE_CLASSES = {
     5: {"name": "Bus", "height": 3.2},
     7: {"name": "Truck", "height": 3.0},
 }
-pci_model = YOLO(PCI_WEIGHTS_PATH)
-pci_model.to(DEVICE)
-veh_model = YOLO(VEHICLE_WEIGHTS_PATH if os.path.exists(VEHICLE_WEIGHTS_PATH) else "yolo11n.pt")
-veh_model.to(DEVICE)
-twin_args = SimpleNamespace(config="nano")
-twin_model = TwinLiteNetPlus(twin_args)
-if os.path.exists(TWINLITE_WEIGHTS_PATH):
-    twin_model.load_state_dict(load_file(TWINLITE_WEIGHTS_PATH))
-twin_model.to(DEVICE)
-twin_model.eval()
+pci_model = None
+veh_model = None
+twin_model = None
+def get_vision_models():
+    global pci_model, veh_model, twin_model, PCI_WEIGHTS_PATH, TWINLITE_WEIGHTS_PATH
+    if pci_model is not None and veh_model is not None and twin_model is not None:
+        return pci_model, veh_model, twin_model
+    from huggingface_hub import hf_hub_download
+    if not os.path.exists(PCI_WEIGHTS_PATH):
+        try:
+            PCI_WEIGHTS_PATH = hf_hub_download(repo_id="uzbtrust/smart-road-pci-yolo11", filename="yolo11l_640_best.pt", local_dir=WEIGHTS_DIR)
+        except Exception:
+            PCI_WEIGHTS_PATH = "yolo11n.pt"
+    if not os.path.exists(TWINLITE_WEIGHTS_PATH):
+        try:
+            TWINLITE_WEIGHTS_PATH = hf_hub_download(repo_id="nielsr/twinlitenetplus-nano", filename="model.safetensors", local_dir=WEIGHTS_DIR)
+        except Exception:
+            pass
+    if pci_model is None:
+        pci_model = YOLO(PCI_WEIGHTS_PATH)
+        pci_model.to(DEVICE)
+    if veh_model is None:
+        veh_model = YOLO(VEHICLE_WEIGHTS_PATH if os.path.exists(VEHICLE_WEIGHTS_PATH) else "yolo11n.pt")
+        veh_model.to(DEVICE)
+    if twin_model is None:
+        twin_args = SimpleNamespace(config="nano")
+        twin_model = TwinLiteNetPlus(twin_args)
+        if os.path.exists(TWINLITE_WEIGHTS_PATH):
+            twin_model.load_state_dict(load_file(TWINLITE_WEIGHTS_PATH))
+        twin_model.to(DEVICE)
+        twin_model.eval()
+    return pci_model, veh_model, twin_model
 vehicle_tracks = {}
 next_track_id = 1
 last_global_chime_time = 0
@@ -83,6 +93,7 @@ def compute_iou(boxA, boxB):
     return interArea / denom
 def run_tri_layer_detection(img: Image.Image, conf_threshold: float):
     global vehicle_tracks, next_track_id, last_global_chime_time
+    pci_model, veh_model, twin_model = get_vision_models()
     t0 = time.perf_counter()
     w, h = img.size
     img_np = np.array(img)

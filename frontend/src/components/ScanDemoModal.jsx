@@ -95,14 +95,18 @@ export default function ScanDemoModal({ onClose }) {
         setIsWakingUp(Boolean(gpuHealth?.wakingUp));
         if (!localModelReady) {
           try {
-            await loadLocalTriLayerModels();
-            if (active) setLocalModelReady(true);
+            const loaded = await loadLocalTriLayerModels();
+            if (active && loaded?.defectModel && loaded?.twinLiteSession && loaded?.vehicleSession) {
+              setLocalModelReady(true);
+            }
           } catch {}
         }
       }
     };
     checkStatus();
-    const interval = setInterval(checkStatus, 2500);
+    const interval = setInterval(() => {
+      if (!localModelReady) checkStatus();
+    }, 5000);
     return () => {
       active = false;
       clearInterval(interval);
@@ -403,10 +407,10 @@ export default function ScanDemoModal({ onClose }) {
             <div style={{ position: 'absolute', inset: 0, background: 'rgba(248, 250, 252, 0.92)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '24px', textAlign: 'center', zIndex: 10 }}>
               <Loader2 size={34} color="#111827" style={{ animation: 'spin 1s linear infinite' }} />
               <div style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a' }}>
-                Connecting to Scan Server...
+                Loading Road Scan Models...
               </div>
               <div style={{ fontSize: '13px', color: '#475569', maxWidth: '380px' }}>
-                Establishing connection to the road scan service. Video playback will start automatically once connected.
+                Downloading and initializing Road Defect, Vehicle Detection, and Road & Lane models. Playback will start automatically once all models are ready.
               </div>
             </div>
           )}
