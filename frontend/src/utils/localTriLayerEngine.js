@@ -86,7 +86,7 @@ function extractDrivableAndLanes(daData, llData) {
   const hw = size * size;
   const leftEdge = [];
   const rightEdge = [];
-  for (let y = 0; y < size; y += 16) {
+  for (let y = 260; y < size; y += 16) {
     let minX = size;
     let maxX = -1;
     let count = 0;
@@ -95,13 +95,13 @@ function extractDrivableAndLanes(daData, llData) {
       const c0 = daData[rowOffset + x];
       const c1 = daData[hw + rowOffset + x];
       const prob = 1.0 / (1.0 + Math.exp(c0 - c1));
-      if (prob > 0.58) {
+      if (prob > 0.62) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         count++;
       }
     }
-    if (count >= 4 && maxX > minX) {
+    if (count >= 12 && maxX - minX >= 48) {
       leftEdge.push([Number((minX / size).toFixed(4)), Number((y / size).toFixed(4))]);
       rightEdge.push([Number((maxX / size).toFixed(4)), Number((y / size).toFixed(4))]);
     }
