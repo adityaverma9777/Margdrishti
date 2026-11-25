@@ -12,7 +12,7 @@ function haversineM(a, b) {
   const s = Math.sin(deltaPhi / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
   return Math.round(R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s)));
 }
-export default function PreFlightModal({ onClose, onPassed, roadName, targetSpeed, task, userLocation }) {
+export default function PreFlightModal({ onClose, onPassed, roadName, targetSpeed, task, userLocation, remoteDevice }) {
   const [checks, setChecks] = useState({
     startZone: { status: 'checking', label: '100m Start Zone Gate', detail: 'Verifying vehicle proximity to Point A' },
     camera: { status: 'checking', label: 'Optical Camera Feed', detail: 'Verifying video stream' },
@@ -59,23 +59,34 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
           startZone: { status: 'passed', label: '100m Start Zone Gate', detail: 'Start zone verified' }
         }));
       }
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-        });
+      if (remoteDevice) {
         if (active) {
-          setStream(localStream);
           setChecks(c => ({
             ...c,
-            camera: { status: 'passed', label: 'Optical Camera Feed', detail: 'Video stream active' }
+            camera: remoteDevice.online
+              ? { status: 'passed', label: 'Optical Camera Feed', detail: `Remote Camera Connected (${remoteDevice.name})` }
+              : { status: 'failed', label: 'Optical Camera Feed', detail: `Remote camera "${remoteDevice.name}" is offline. Open its link on the phone.` }
           }));
         }
-      } catch (err) {
-        if (active) {
-          setChecks(c => ({
-            ...c,
-            camera: { status: 'failed', label: 'Optical Camera Feed', detail: 'Camera permission denied or camera unavailable' }
-          }));
+      } else {
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+          });
+          if (active) {
+            setStream(localStream);
+            setChecks(c => ({
+              ...c,
+              camera: { status: 'passed', label: 'Optical Camera Feed', detail: 'Video stream active' }
+            }));
+          }
+        } catch (err) {
+          if (active) {
+            setChecks(c => ({
+              ...c,
+              camera: { status: 'failed', label: 'Optical Camera Feed', detail: 'Camera permission denied or camera unavailable' }
+            }));
+          }
         }
       }
       try {
@@ -102,7 +113,15 @@ export default function PreFlightModal({ onClose, onPassed, roadName, targetSpee
           }));
         }
       }
-      if ('geolocation' in navigator) {
+      if (remoteDevice?.lastGps?.lat) {
+        if (active) {
+          const acc = Math.round(remoteDevice.lastGps.accuracy || 10);
+          setChecks(c => ({
+            ...c,
+            gps: { status: 'passed', label: 'GPS Satellite Position', detail: `Remote Device GPS Locked (±${acc}m)` }
+          }));
+        }
+      } else if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             if (active) {

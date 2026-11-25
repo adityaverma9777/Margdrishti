@@ -4,6 +4,7 @@ import * as tf from '@tensorflow/tfjs';
 import { supabase } from '../supabaseClient';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
 import { runInference, parseYoloOutputAll } from '../utils/tfjsParser';
+import { startCameraReceiver } from '../utils/remoteCameraBridge';
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -17,7 +18,7 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
-export default function SurveyCockpit({ task, initialStream, onFinish }) {
+export default function SurveyCockpit({ task, initialStream, remoteDevice, onFinish }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const graphCanvasRef = useRef(null);
@@ -36,6 +37,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const [localModel, setLocalModel] = useState(null);
   const [gpuServerOnline, setGpuServerOnline] = useState(false);
   const [engineReady, setEngineReady] = useState(false);
+  const [remoteConnState, setRemoteConnState] = useState(remoteDevice ? 'connecting' : 'local');
   const [currentSpeed, setCurrentSpeed] = useState(0);
   const [targetSpeed] = useState(task?.target_speed_kmh || 25);
   const [pciScore, setPciScore] = useState(100);
@@ -101,71 +103,101 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   useEffect(() => {
     stoppedRef.current = false;
     let localStream = initialStream;
-    const startCamera = async () => {
-      if (!localStream) {
-        try {
-          localStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-          });
-        } catch { }
-      }
-      if (videoRef.current && localStream) {
-        videoRef.current.srcObject = localStream;
-        videoRef.current.play().catch(() => { });
-      }
-    };
-    startCamera();
+    let remoteReceiver = null;
     let watchId = null;
-    if ('geolocation' in navigator) {
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
+    const processGpsTick = (lat, lon, rawSpeedKmh, rawSpeedMs, accuracy) => {
+      if (stoppedRef.current) return;
+      const now = Date.now();
+      let calculatedSpeedKmh = 0;
+      if (rawSpeedKmh !== null && rawSpeedKmh !== undefined && rawSpeedKmh >= 0) {
+        calculatedSpeedKmh = rawSpeedKmh;
+      } else if (rawSpeedMs !== null && rawSpeedMs !== undefined && rawSpeedMs >= 0) {
+        calculatedSpeedKmh = Math.round(rawSpeedMs * 3.6 * 10) / 10;
+      } else if (prevCoordsRef.current) {
+        const dtSeconds = (now - (prevCoordsRef.current.time || now)) / 1000;
+        const distKm = haversineDistance(prevCoordsRef.current.lat, prevCoordsRef.current.lon, lat, lon);
+        const distMeters = distKm * 1000;
+        if (dtSeconds > 1.0 && distMeters > Math.max(12, accuracy * 0.6)) {
+          calculatedSpeedKmh = Math.round((distKm / (dtSeconds / 3600)) * 10) / 10;
+        }
+      }
+      if (calculatedSpeedKmh < 3) {
+        calculatedSpeedKmh = 0;
+      }
+      setCurrentSpeed(calculatedSpeedKmh);
+      if (calculatedSpeedKmh > maxSpeedRef.current) maxSpeedRef.current = calculatedSpeedKmh;
+      totalSpeedSumRef.current += calculatedSpeedKmh;
+      speedReadingsCountRef.current += 1;
+      setSpeedAlert(calculatedSpeedKmh > (targetSpeed + 10));
+      setUserLocation([lat, lon]);
+      setGpsAccuracy(accuracy);
+      if (calculatedSpeedKmh >= 3 && accuracy <= 35) {
+        tripRoutePointsRef.current.push([lat, lon]);
+      }
+      if (calculatedSpeedKmh >= 3 && prevCoordsRef.current && accuracy <= 35) {
+        const distIncrement = haversineDistance(
+          prevCoordsRef.current.lat,
+          prevCoordsRef.current.lon,
+          lat,
+          lon
+        );
+        const distMeters = distIncrement * 1000;
+        if (distMeters >= 5 && distIncrement < 0.5) {
+          setDistanceKm(d => Math.round((d + distIncrement) * 100) / 100);
+        }
+      }
+      prevCoordsRef.current = { lat, lon, time: now };
+    };
+    if (remoteDevice?.id) {
+      remoteReceiver = startCameraReceiver({
+        deviceId: remoteDevice.id,
+        onStream: (stream) => {
           if (stoppedRef.current) return;
-          const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
-          const rawSpeed = pos.coords.speed;
-          const accuracy = Math.round(pos.coords.accuracy || 20);
-          const now = Date.now();
-          let calculatedSpeedKmh = 0;
-          if (rawSpeed !== null && rawSpeed !== undefined && rawSpeed >= 0) {
-            calculatedSpeedKmh = Math.round(rawSpeed * 3.6 * 10) / 10;
-          } else if (prevCoordsRef.current) {
-            const dtSeconds = (now - (prevCoordsRef.current.time || now)) / 1000;
-            const distKm = haversineDistance(prevCoordsRef.current.lat, prevCoordsRef.current.lon, lat, lon);
-            const distMeters = distKm * 1000;
-            if (dtSeconds > 1.0 && distMeters > Math.max(12, accuracy * 0.6)) {
-              calculatedSpeedKmh = Math.round((distKm / (dtSeconds / 3600)) * 10) / 10;
-            }
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.play().catch(() => {});
           }
-          if (calculatedSpeedKmh < 3) {
-            calculatedSpeedKmh = 0;
-          }
-          setCurrentSpeed(calculatedSpeedKmh);
-          if (calculatedSpeedKmh > maxSpeedRef.current) maxSpeedRef.current = calculatedSpeedKmh;
-          totalSpeedSumRef.current += calculatedSpeedKmh;
-          speedReadingsCountRef.current += 1;
-          setSpeedAlert(calculatedSpeedKmh > (targetSpeed + 10));
-          setUserLocation([lat, lon]);
-          setGpsAccuracy(accuracy);
-          if (calculatedSpeedKmh >= 3 && accuracy <= 35) {
-            tripRoutePointsRef.current.push([lat, lon]);
-          }
-          if (calculatedSpeedKmh >= 3 && prevCoordsRef.current && accuracy <= 35) {
-            const distIncrement = haversineDistance(
-              prevCoordsRef.current.lat,
-              prevCoordsRef.current.lon,
-              lat,
-              lon
-            );
-            const distMeters = distIncrement * 1000;
-            if (distMeters >= 5 && distIncrement < 0.5) {
-              setDistanceKm(d => Math.round((d + distIncrement) * 100) / 100);
-            }
-          }
-          prevCoordsRef.current = { lat, lon, time: now };
+          setEngineReady(true);
         },
-        () => { },
-        { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
-      );
+        onGpsUpdate: (gps) => {
+          if (gps && gps.lat !== null && gps.lon !== null) {
+            processGpsTick(gps.lat, gps.lon, gps.speedKmh, null, gps.accuracy || 15);
+          }
+        },
+        onConnectionState: (st) => {
+          if (!stoppedRef.current) setRemoteConnState(st);
+        }
+      });
+    } else {
+      const startCamera = async () => {
+        if (!localStream) {
+          try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+            });
+          } catch {}
+        }
+        if (videoRef.current && localStream) {
+          videoRef.current.srcObject = localStream;
+          videoRef.current.play().catch(() => {});
+        }
+      };
+      startCamera();
+      if ('geolocation' in navigator) {
+        watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            processGpsTick(
+              pos.coords.latitude,
+              pos.coords.longitude,
+              null,
+              pos.coords.speed,
+              Math.round(pos.coords.accuracy || 20)
+            );
+          },
+          () => {},
+          { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+        );
+      }
     }
     const timer = setInterval(() => {
       if (stoppedRef.current) return;
@@ -175,9 +207,10 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       stoppedRef.current = true;
       clearInterval(timer);
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      if (remoteReceiver) remoteReceiver.cleanup();
       if (localStream) localStream.getTracks().forEach(t => t.stop());
     };
-  }, [initialStream, targetSpeed]);
+  }, [initialStream, remoteDevice, targetSpeed]);
   const isNearStretch = useCallback((loc) => {
     if (!loc || !task?.route_points || task?.is_free_drive) return true;
     let pts = task.route_points;
@@ -544,8 +577,13 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             <div style={{ fontSize: '15px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span>{task?.road_name || task?.title || 'Active Road Survey'}</span>
               {task?.is_free_drive && (
-                <span style={{ fontSize: '10px', background: '#0284c7', color: '#ffffff', padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
+                <span style={{ fontSize: '10px', background: '#111827', color: '#ffffff', padding: '2px 8px', borderRadius: '10px', fontWeight: 700, border: '1px solid #374151' }}>
                   Free Drive Mode
+                </span>
+              )}
+              {remoteDevice && (
+                <span style={{ fontSize: '10px', background: remoteConnState === 'connected' ? '#166534' : '#92400e', color: '#ffffff', padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
+                  {remoteDevice.name} · {remoteConnState === 'connected' ? 'Live Feed' : remoteConnState === 'reconnecting' ? 'Reconnecting...' : 'Connecting...'}
                 </span>
               )}
             </div>

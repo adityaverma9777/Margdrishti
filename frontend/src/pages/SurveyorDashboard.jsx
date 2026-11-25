@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Navigation, CheckCircle, Clock, Plus, Route, AlertCircle, Compass } from 'lucide-react';
+import { Play, Navigation, CheckCircle, Clock, Plus, Route, AlertCircle, Compass, Smartphone, Copy, Check, Trash2, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 import PreFlightModal from '../components/PreFlightModal';
@@ -7,6 +7,7 @@ import SurveyCockpit from '../components/SurveyCockpit';
 import SurveyorTrackMap from '../components/SurveyorTrackMap';
 import TurnByTurnNavModal from '../components/TurnByTurnNavModal';
 import StretchDistanceCheckerModal from '../components/StretchDistanceCheckerModal';
+import { startCameraReceiver } from '../utils/remoteCameraBridge';
 function getTaskStartPoint(task) {
   if (!task) return null;
   let pts = task.route_points;
@@ -44,9 +45,103 @@ export default function SurveyorDashboard() {
   const [selectedTask, setSelectedTask] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [trackPoints, setTrackPoints] = useState([]);
+  const [pairedDevices, setPairedDevices] = useState(() => {
+    try {
+      const saved = localStorage.getItem('streetiq_paired_devices');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [selectedCameraSource, setSelectedCameraSource] = useState('local');
+  const [deviceStatusMap, setDeviceStatusMap] = useState({});
+  const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
+  const [newDeviceName, setNewDeviceName] = useState('');
+  const [copiedDeviceId, setCopiedDeviceId] = useState(null);
+  const [, setStatusTick] = useState(0);
   const prevCoordsRef = useRef(null);
+  useEffect(() => {
+    try {
+      localStorage.setItem('streetiq_paired_devices', JSON.stringify(pairedDevices));
+    } catch {}
+  }, [pairedDevices]);
+  useEffect(() => {
+    if (pairedDevices.length === 0) return;
+    const receivers = pairedDevices.map(dev =>
+      startCameraReceiver({
+        deviceId: dev.id,
+        onHeartbeat: (hb) => {
+          setDeviceStatusMap(prev => ({
+            ...prev,
+            [dev.id]: {
+              ...(prev[dev.id] || {}),
+              lastSeen: Date.now(),
+              deviceName: hb?.deviceName || dev.name
+            }
+          }));
+        },
+        onGpsUpdate: (gps) => {
+          if (!gps) return;
+          setDeviceStatusMap(prev => ({
+            ...prev,
+            [dev.id]: {
+              ...(prev[dev.id] || {}),
+              lastSeen: Date.now(),
+              lastGps: gps
+            }
+          }));
+        }
+      })
+    );
+    const tick = setInterval(() => setStatusTick(t => t + 1), 3000);
+    return () => {
+      clearInterval(tick);
+      receivers.forEach(r => r.cleanup());
+    };
+  }, [pairedDevices]);
+  const getDeviceOnline = (id) => {
+    const info = deviceStatusMap[id];
+    return Boolean(info && info.lastSeen && (Date.now() - info.lastSeen) < 8000);
+  };
+  const selectedRemoteDeviceObj = selectedCameraSource !== 'local'
+    ? pairedDevices.find(d => d.id === selectedCameraSource)
+    : null;
+  const activeRemoteDevice = selectedRemoteDeviceObj
+    ? {
+        ...selectedRemoteDeviceObj,
+        online: getDeviceOnline(selectedRemoteDeviceObj.id),
+        lastGps: deviceStatusMap[selectedRemoteDeviceObj.id]?.lastGps || null
+      }
+    : null;
+  const effectiveUserLocation = (activeRemoteDevice?.lastGps?.lat && activeRemoteDevice?.lastGps?.lon)
+    ? [activeRemoteDevice.lastGps.lat, activeRemoteDevice.lastGps.lon]
+    : userLocation;
+  const handleAddDevice = (e) => {
+    e.preventDefault();
+    const trimmed = newDeviceName.trim();
+    if (!trimmed) return;
+    const newDev = {
+      id: `cam_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`,
+      name: trimmed,
+      createdAt: new Date().toISOString()
+    };
+    setPairedDevices(prev => [newDev, ...prev]);
+    setSelectedCameraSource(newDev.id);
+    setNewDeviceName('');
+  };
+  const handleRemoveDevice = (id) => {
+    setPairedDevices(prev => prev.filter(d => d.id !== id));
+    if (selectedCameraSource === id) setSelectedCameraSource('local');
+  };
+  const getDeviceLink = (dev) => `${window.location.origin}/?cam=${dev.id}&name=${encodeURIComponent(dev.name)}`;
+  const handleCopyDeviceLink = (dev) => {
+    navigator.clipboard.writeText(getDeviceLink(dev)).then(() => {
+      setCopiedDeviceId(dev.id);
+      setTimeout(() => setCopiedDeviceId(null), 2000);
+    }).catch(() => {});
+  };
   const taskStartPoint = getTaskStartPoint(selectedTask);
-  const distanceToStartM = (userLocation && taskStartPoint) ? calculateDirectDistanceMeters(userLocation, taskStartPoint) : null;
+  const distanceToStartM = (effectiveUserLocation && taskStartPoint) ? calculateDirectDistanceMeters(effectiveUserLocation, taskStartPoint) : null;
   const isInStartVicinity = selectedTask?.is_free_drive ? true : (distanceToStartM !== null ? distanceToStartM <= 100 : false);
   const handleStartFreeDrive = () => {
     const freeDriveTask = {
@@ -152,6 +247,14 @@ export default function SurveyorDashboard() {
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button
             className="gov-btn-secondary"
+            onClick={() => setShowAddDeviceModal(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Smartphone size={15} />
+            <span>Add Device {pairedDevices.length > 0 ? `(${pairedDevices.length})` : ''}</span>
+          </button>
+          <button
+            className="gov-btn-secondary"
             onClick={() => setShowDefineModal(true)}
           >
             <Plus size={15} />
@@ -160,7 +263,7 @@ export default function SurveyorDashboard() {
           <button
             className="gov-btn-secondary"
             onClick={handleStartFreeDrive}
-            style={{ background: '#f0f9ff', borderColor: '#bae6fd', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '6px' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
           >
             <Compass size={15} />
             <span>Drive & Free Scan</span>
@@ -177,7 +280,7 @@ export default function SurveyorDashboard() {
             <button
               className="gov-btn-primary"
               onClick={() => setIsNavigatingToStart(true)}
-              style={{ background: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '6px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             >
               <Compass size={15} />
               <span>Navigate to Start {distanceToStartM !== null ? `(${formatDistanceLabel(distanceToStartM)})` : ''}</span>
@@ -233,27 +336,86 @@ export default function SurveyorDashboard() {
         </div>
       </div>
       <SurveyorTrackMap
-        userLocation={userLocation}
+        userLocation={effectiveUserLocation}
         trackPoints={trackPoints}
         taskRoutePoints={selectedTask?.route_points || null}
         height={200}
       />
-      <div className="gov-card" style={{ padding: '16px 20px', marginBottom: '20px', marginTop: '20px', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff', border: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+      <div className="gov-card" style={{ padding: '14px 18px', marginTop: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+            Video & GPS Source:
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedCameraSource('local')}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: `1.5px solid ${selectedCameraSource === 'local' ? '#111827' : '#cbd5e1'}`,
+              background: selectedCameraSource === 'local' ? '#111827' : '#ffffff',
+              color: selectedCameraSource === 'local' ? '#ffffff' : '#334155',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            Local Device Camera
+          </button>
+          {pairedDevices.map(dev => {
+            const online = getDeviceOnline(dev.id);
+            const isSel = selectedCameraSource === dev.id;
+            return (
+              <button
+                key={dev.id}
+                type="button"
+                onClick={() => setSelectedCameraSource(dev.id)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: `1.5px solid ${isSel ? '#111827' : '#cbd5e1'}`,
+                  background: isSel ? '#111827' : '#ffffff',
+                  color: isSel ? '#ffffff' : '#334155',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: online ? '#22c55e' : '#94a3b8' }}></span>
+                <span>{dev.name}</span>
+                <span style={{ fontSize: '10px', opacity: 0.8 }}>{online ? '· Connected' : '· Offline'}</span>
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowAddDeviceModal(true)}
+          className="gov-btn-secondary"
+          style={{ padding: '6px 12px', fontSize: '12px' }}
+        >
+          <Smartphone size={14} />
+          <span>Manage / Add Device</span>
+        </button>
+      </div>
+      <div className="gov-card" style={{ padding: '16px 20px', marginBottom: '20px', marginTop: '14px', background: '#111827', color: '#ffffff', border: '1px solid #1f2937', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#22c55e', display: 'inline-block', boxShadow: '0 0 10px #22c55e' }}></span>
+            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }}></span>
             <span style={{ fontSize: '14px', fontWeight: 800, letterSpacing: '-0.2px' }}>Drive & Random Scan Mode (Roaming Patrol)</span>
           </div>
-          <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px', maxWidth: '580px' }}>
-            Drive anywhere across the road network without a pre-assigned stretch. The vehicle AI camera continuously logs potholes, cracks, and surface distress with live GPS coordinates.
+          <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px', maxWidth: '580px' }}>
+            Drive anywhere across the road network without a pre-assigned stretch. The selected camera continuously logs road defects with live GPS coordinates.
           </p>
         </div>
         <button
           onClick={handleStartFreeDrive}
-          className="gov-btn-primary"
-          style={{ background: '#0284c7', borderColor: '#0284c7', padding: '10px 18px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 14px rgba(2,132,199,0.4)' }}
+          style={{ background: '#ffffff', color: '#111827', border: 'none', borderRadius: '6px', padding: '10px 18px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
         >
-          <Play size={15} fill="#ffffff" />
+          <Play size={15} fill="#111827" />
           <span>Turn On Drive & Scan</span>
         </button>
       </div>
@@ -384,7 +546,7 @@ export default function SurveyorDashboard() {
       </div>
       {showDefineModal && (
         <StretchDistanceCheckerModal
-          userLocation={userLocation}
+          userLocation={effectiveUserLocation}
           onClose={() => setShowDefineModal(false)}
           onSaveStretch={handleSaveStretchFromChecker}
         />
@@ -394,7 +556,8 @@ export default function SurveyorDashboard() {
           roadName={selectedTask?.road_name || selectedTask?.title || 'Road Inspection Run'}
           targetSpeed={selectedTask?.target_speed_kmh || 25}
           task={selectedTask}
-          userLocation={userLocation}
+          userLocation={effectiveUserLocation}
+          remoteDevice={activeRemoteDevice}
           onClose={() => setShowPreFlight(false)}
           onPassed={(stream) => {
             setShowPreFlight(false);
@@ -407,6 +570,7 @@ export default function SurveyorDashboard() {
         <SurveyCockpit
           task={selectedTask}
           initialStream={surveyStream}
+          remoteDevice={activeRemoteDevice}
           onFinish={() => {
             setIsSurveyingActive(false);
             setSurveyStream(null);
@@ -417,13 +581,99 @@ export default function SurveyorDashboard() {
       {isNavigatingToStart && selectedTask && (
         <TurnByTurnNavModal
           task={selectedTask}
-          userLocation={userLocation}
+          userLocation={effectiveUserLocation}
           onClose={() => setIsNavigatingToStart(false)}
           onLaunchSurvey={() => {
             setIsNavigatingToStart(false);
             setShowPreFlight(true);
           }}
         />
+      )}
+      {showAddDeviceModal && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3500, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div className="gov-card" style={{ width: '100%', maxWidth: '500px', padding: '22px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Smartphone size={18} color="#111827" />
+                <h2 style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a' }}>Add Remote Camera & GPS Device</h2>
+              </div>
+              <button onClick={() => setShowAddDeviceModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <p style={{ fontSize: '12px', color: '#475569', marginBottom: '14px', lineHeight: '1.5' }}>
+              Name a mobile device to generate a pairing link. Open that link on your phone to stream its rear camera and live GPS directly to this dashboard.
+            </p>
+            <form onSubmit={handleAddDevice} style={{ display: 'flex', gap: '8px', marginBottom: '18px' }}>
+              <input
+                type="text"
+                className="gov-input"
+                placeholder="Device name (e.g. Dashcam Phone 1)"
+                value={newDeviceName}
+                onChange={(e) => setNewDeviceName(e.target.value)}
+                required
+                style={{ flex: 1 }}
+              />
+              <button type="submit" className="gov-btn-primary" style={{ padding: '8px 16px', fontSize: '13px' }}>
+                <Plus size={14} />
+                <span>Add</span>
+              </button>
+            </form>
+            {pairedDevices.length === 0 ? (
+              <div style={{ padding: '20px', textAlign: 'center', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px', color: '#64748b' }}>
+                No remote devices added yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {pairedDevices.map(dev => {
+                  const online = getDeviceOnline(dev.id);
+                  const gps = deviceStatusMap[dev.id]?.lastGps;
+                  const link = getDeviceLink(dev);
+                  const isCopied = copiedDeviceId === dev.id;
+                  return (
+                    <div key={dev.id} style={{ padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#ffffff' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: online ? '#22c55e' : '#94a3b8' }}></span>
+                          <strong style={{ fontSize: '13px', color: '#0f172a' }}>{dev.name}</strong>
+                          <span style={{ fontSize: '11px', color: online ? '#166534' : '#64748b', fontWeight: 600 }}>
+                            {online ? (gps?.accuracy ? `Connected · GPS ±${gps.accuracy}m` : 'Connected') : 'Waiting for device'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveDevice(dev.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '4px' }}
+                          title="Remove device"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <input
+                          type="text"
+                          readOnly
+                          value={link}
+                          className="gov-input"
+                          style={{ flex: 1, fontSize: '11px', background: '#f8fafc', color: '#475569', padding: '6px 8px' }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleCopyDeviceLink(dev)}
+                          className="gov-btn-primary"
+                          style={{ padding: '6px 12px', fontSize: '12px' }}
+                        >
+                          {isCopied ? <Check size={13} /> : <Copy size={13} />}
+                          <span>{isCopied ? 'Copied' : 'Copy Link'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
