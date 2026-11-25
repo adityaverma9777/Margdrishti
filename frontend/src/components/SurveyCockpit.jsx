@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Square, ArrowLeft, Volume2, VolumeX, ShieldCheck, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Square, ArrowLeft, ShieldCheck, CheckCircle, AlertTriangle } from 'lucide-react';
 import * as tf from '@tensorflow/tfjs';
 import { supabase } from '../supabaseClient';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
@@ -22,9 +22,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const canvasRef = useRef(null);
   const graphCanvasRef = useRef(null);
   const offscreenCanvasRef = useRef(document.createElement('canvas'));
-  const audioCtxRef = useRef(null);
   const stoppedRef = useRef(false);
-  const lastAlertTimeRef = useRef(0);
   const prevCoordsRef = useRef(null);
   const lastDetectionsRef = useRef([]);
   const lastTriLayerRef = useRef(null);
@@ -45,12 +43,10 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
   const [gpsAccuracy, setGpsAccuracy] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [detectionsCount, setDetectionsCount] = useState({ potholes: 0, cracks: 0, other: 0, total: 0 });
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [distanceKm, setDistanceKm] = useState(0);
   const [telemetryHistory, setTelemetryHistory] = useState([]);
   const [speedAlert, setSpeedAlert] = useState(false);
-  const [fcwActive, setFcwActive] = useState(false);
   useEffect(() => {
     const initTripRecord = async () => {
       try {
@@ -102,30 +98,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       clearInterval(interval);
     };
   }, [localModel]);
-  const playAlertChime = useCallback((freq = 880) => {
-    if (!soundEnabled) return;
-    const now = Date.now();
-    if (now - lastAlertTimeRef.current < 3500) return;
-    lastAlertTimeRef.current = now;
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(freq / 2, ctx.currentTime + 0.22);
-      gain.gain.setValueAtTime(0.24, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.22);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.22);
-    } catch { }
-  }, [soundEnabled]);
   useEffect(() => {
     stoppedRef.current = false;
     let localStream = initialStream;
@@ -396,10 +368,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
                 setPciScore(res.estimated_pci);
                 setPciRating(res.pci_rating || 'Good');
               }
-              setFcwActive(Boolean(res.fcw_alert));
-              if (res.fcw_audio) playAlertChime(880);
               if (hazs.length > 0) {
-                playAlertChime(660);
                 let newPotholes = 0;
                 let newCracks = 0;
                 let newOther = 0;
@@ -431,7 +400,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
             else preds.dispose();
             lastDetectionsRef.current = currentDetections;
             if (currentDetections.length > 0) {
-              playAlertChime(660);
               let newPotholes = 0;
               let newCracks = 0;
               let newOther = 0;
@@ -463,7 +431,7 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
     };
     animId = requestAnimationFrame(inferenceAndRenderLoop);
     return () => cancelAnimationFrame(animId);
-  }, [engineReady, gpuServerOnline, localModel, playAlertChime, saveRealHazardToDb]);
+  }, [engineReady, gpuServerOnline, localModel, saveRealHazardToDb]);
   useEffect(() => {
     const interval = setInterval(() => {
       if (stoppedRef.current) return;
@@ -587,12 +555,6 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            style={{ background: 'none', border: 'none', color: soundEnabled ? '#38bdf8' : '#94a3b8', cursor: 'pointer' }}
-          >
-            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-          </button>
           <div style={{ background: speedAlert ? 'rgba(220, 38, 38, 0.25)' : currentSpeed < 3 ? 'rgba(100, 116, 139, 0.25)' : 'rgba(22, 163, 74, 0.25)', border: `1px solid ${speedAlert ? '#dc2626' : currentSpeed < 3 ? '#64748b' : '#16a34a'}`, padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, color: speedAlert ? '#f87171' : currentSpeed < 3 ? '#94a3b8' : '#4ade80' }}>
             {currentSpeed < 3 ? 'Vehicle Stationary (0 km/h)' : `${currentSpeed} km/h ${speedAlert ? '(Reduce Speed)' : '(Speed Compliant)'}`}
           </div>
@@ -608,25 +570,19 @@ export default function SurveyCockpit({ task, initialStream, onFinish }) {
       <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000000', overflow: 'hidden' }}>
         <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
         <canvas ref={canvasRef} width={1280} height={720} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-        {fcwActive && (
-          <div style={{ position: 'absolute', top: 16, background: '#dc2626', color: '#ffffff', padding: '10px 24px', borderRadius: '8px', fontSize: '15px', fontWeight: 900, letterSpacing: '0.8px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 0 25px rgba(220, 38, 38, 0.85)' }}>
-            <AlertTriangle size={22} />
-            <span>COLLISION WARNING — BRAKE</span>
-          </div>
-        )}
-        {currentSpeed < 3 && !fcwActive && (
+        {currentSpeed < 3 && (
           <div style={{ position: 'absolute', top: 16, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', border: '1px solid #475569', color: '#94a3b8', padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#64748b', display: 'inline-block' }}></span>
             <span>Vehicle Stationary — Ready to scan once driving begins</span>
           </div>
         )}
-        {speedAlert && !fcwActive && (
+        {speedAlert && (
           <div style={{ position: 'absolute', top: 16, background: 'rgba(220, 38, 38, 0.92)', color: '#ffffff', padding: '8px 20px', borderRadius: '8px', fontSize: '14px', fontWeight: 800, letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <AlertTriangle size={18} />
             <span>REDUCE SPEED — TARGET IS {targetSpeed} KM/H</span>
           </div>
         )}
-        {!isNearStretch(userLocation) && task?.route_points && !task?.is_free_drive && !fcwActive && (
+        {!isNearStretch(userLocation) && task?.route_points && !task?.is_free_drive && (
           <div style={{ position: 'absolute', top: speedAlert ? 60 : 16, background: 'rgba(234, 88, 12, 0.92)', color: '#ffffff', padding: '8px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
             <AlertTriangle size={18} />
             <span>OUTSIDE STRETCH VICINITY — DEFECT LOGGING PAUSED</span>
