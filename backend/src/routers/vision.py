@@ -17,7 +17,8 @@ from safetensors.torch import load_file
 from .. import twinlite_config as cfg
 from ..twinlitenet_model import TwinLiteNetPlus
 router = APIRouter(prefix="", tags=["vision"])
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+IS_HF_ZEROGPU = bool(os.getenv("SPACES_ZERO_GPU") or os.getenv("SPACE_ID"))
+DEVICE = "cpu" if IS_HF_ZEROGPU else ("cuda" if torch.cuda.is_available() else "cpu")
 WEIGHTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "weights")
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 PCI_WEIGHTS_PATH = os.path.join(WEIGHTS_DIR, "yolo11l_640_best.pt")
@@ -326,8 +327,8 @@ def vision_health():
     return {
         "status": "online",
         "device": DEVICE,
-        "device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
-        "vram_total_mb": round(torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)) if torch.cuda.is_available() else 0,
+        "device_name": torch.cuda.get_device_name(0) if DEVICE == "cuda" else "CPU",
+        "vram_total_mb": round(torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)) if DEVICE == "cuda" else 0,
         "layers": {
             "layer_1": "uzbtrust/smart-road-pci-yolo11",
             "layer_2": "TwinLiteNet+ (nano/safetensors)",
