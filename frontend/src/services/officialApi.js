@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient';
 
-const BACKEND_BASE = import.meta.env.VITE_OFFICIAL_API_URL || 'http://127.0.0.1:8001/api';
+const DEFAULT_ORIGIN = import.meta.env.VITE_GPU_SERVER_URL || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : 'https://streetiq-gov-api.onrender.com');
+const BACKEND_BASE = import.meta.env.VITE_OFFICIAL_API_URL || `${DEFAULT_ORIGIN}/api`;
 
 async function requestBackend(endpoint, options = {}) {
   try {
