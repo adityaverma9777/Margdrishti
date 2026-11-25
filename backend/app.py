@@ -1,11 +1,10 @@
 import os
-import gradio as gr
+os.environ["GRADIO_SSR_MODE"] = "false"
 import uvicorn
 from src.server import app
-with gr.Blocks(title="StreetIQ Gov API") as demo:
-    gr.Markdown("## StreetIQ Gov API")
-    gr.Markdown("FastAPI & Road Survey Vision Service is running.")
-app = gr.mount_gradio_app(app, demo, path="/")
+@app.get("/")
+def root():
+    return {"status": "online", "service": "StreetIQ Gov API"}
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 7860))
     uvicorn.run(app, host="0.0.0.0", port=port)
