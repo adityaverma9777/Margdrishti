@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { X, Play, Pause, RotateCcw, Volume2, VolumeX, Activity, AlertTriangle } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import { X, Play, Pause, RotateCcw, Activity } from 'lucide-react';
 import * as tf from '@tensorflow/tfjs';
 import { supabase } from '../supabaseClient';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
@@ -12,20 +12,16 @@ const DEMO_VIDEOS = [
 export default function ScanDemoModal({ onClose }) {
   const [selectedVideo, setSelectedVideo] = useState(DEMO_VIDEOS[0]);
   const [isPlaying, setIsPlaying] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const [pciScore, setPciScore] = useState(100);
   const [pciRating, setPciRating] = useState('Good');
   const [hazardsCount, setHazardsCount] = useState(0);
   const [vehiclesCount, setVehiclesCount] = useState(0);
-  const [fcwActive, setFcwActive] = useState(false);
   const [gpuServerOnline, setGpuServerOnline] = useState(false);
   const [isWakingUp, setIsWakingUp] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const lastAlertTimeRef = useRef(0);
   const lastTriLayerRef = useRef(null);
   const lastDetectionsRef = useRef([]);
   const localModelRef = useRef(null);
@@ -137,37 +133,12 @@ export default function ScanDemoModal({ onClose }) {
       clearInterval(interval);
     };
   }, []);
-  const playAlertChime = useCallback((freq = 880) => {
-    if (!soundEnabled) return;
-    const now = Date.now();
-    if (now - lastAlertTimeRef.current < 3500) return;
-    lastAlertTimeRef.current = now;
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(freq / 2, ctx.currentTime + 0.22);
-      gain.gain.setValueAtTime(0.24, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.22);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.22);
-    } catch {}
-  }, [soundEnabled]);
   const handleSelectVideo = (v) => {
     setSelectedVideo(v);
     setPciScore(100);
     setPciRating('Good');
     setHazardsCount(0);
     setVehiclesCount(0);
-    setFcwActive(false);
     lastTriLayerRef.current = null;
     lastDetectionsRef.current = [];
     if (videoRef.current) {
@@ -346,12 +317,9 @@ export default function ScanDemoModal({ onClose }) {
                   pciScoreRef.current = res.estimated_pci;
                   setPciRating(res.pci_rating || 'Good');
                 }
-                setFcwActive(Boolean(res.fcw_alert));
                 setVehiclesCount((res.vehicles || []).length);
                 setHazardsCount(hazs.length);
-                if (res.fcw_audio) playAlertChime(880);
                 if (hazs.length > 0) {
-                  playAlertChime(660);
                   handleDefectLogging(hazs, video);
                 }
               }
@@ -363,7 +331,6 @@ export default function ScanDemoModal({ onClose }) {
               lastDetectionsRef.current = currentDetections;
               setHazardsCount(currentDetections.length);
               if (currentDetections.length > 0) {
-                playAlertChime(660);
                 handleDefectLogging(currentDetections, video);
               }
             }
@@ -378,7 +345,7 @@ export default function ScanDemoModal({ onClose }) {
       stoppedRef.current = true;
       cancelAnimationFrame(animId);
     };
-  }, [gpuServerOnline, playAlertChime]);
+  }, [gpuServerOnline]);
   const formatTime = (sec) => {
     if (isNaN(sec)) return '0:00';
     const m = Math.floor(sec / 60);
@@ -421,12 +388,6 @@ export default function ScanDemoModal({ onClose }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            style={{ background: 'transparent', border: 'none', color: soundEnabled ? '#38bdf8' : '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '6px' }}
-          >
-            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-          </button>
-          <button
             onClick={onClose}
             style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600 }}
           >
@@ -452,12 +413,6 @@ export default function ScanDemoModal({ onClose }) {
           height={720}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
         />
-        {fcwActive && (
-          <div style={{ position: 'absolute', top: 20, background: '#dc2626', color: '#ffffff', padding: '8px 20px', borderRadius: '6px', fontSize: '14px', fontWeight: 900, letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 0 20px rgba(220, 38, 38, 0.85)' }}>
-            <AlertTriangle size={18} />
-            <span>COLLISION WARNING — BRAKE</span>
-          </div>
-        )}
         <div style={{ position: 'absolute', top: 16, left: 16, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '14px' }}>
           <div>
             <span style={{ color: '#94a3b8' }}>PCI: </span>
