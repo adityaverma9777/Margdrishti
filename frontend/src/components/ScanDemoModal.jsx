@@ -1,8 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { X, Play, Pause, RotateCcw, Loader2, Camera } from 'lucide-react';
-import * as tf from '@tensorflow/tfjs';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
-import { runInference, parseYoloOutputAll } from '../utils/tfjsParser';
+import { loadLocalTriLayerModels, predictLocalTriLayer } from '../utils/localTriLayerEngine';
 const DEMO_VIDEOS = [
   { id: 'video1', src: '/demo_scans/video1.mp4', label: 'Footage 1' },
   { id: 'video2', src: '/demo_scans/video2.mp4', label: 'Footage 2' },
@@ -21,15 +20,19 @@ export default function ScanDemoModal({ onClose }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [detectedFeed, setDetectedFeed] = useState([]);
+  const [enableDefects, setEnableDefects] = useState(true);
+  const [enableVehicles, setEnableVehicles] = useState(true);
+  const [enableRoad, setEnableRoad] = useState(true);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const lastTriLayerRef = useRef(null);
   const lastDetectionsRef = useRef([]);
-  const localModelRef = useRef(null);
   const isInferringRef = useRef(false);
   const lastInferTimeRef = useRef(0);
   const stoppedRef = useRef(false);
   const lastSnapshotTimesRef = useRef({});
+  const modelTogglesRef = useRef({ enableDefects: true, enableVehicles: true, enableRoad: true });
+  modelTogglesRef.current = { enableDefects, enableVehicles, enableRoad };
   const engineConnected = gpuServerOnline || localModelReady;
   const formatTime = (sec) => {
     if (isNaN(sec)) return '0:00';
@@ -90,13 +93,10 @@ export default function ScanDemoModal({ onClose }) {
       } else {
         setGpuServerOnline(false);
         setIsWakingUp(Boolean(gpuHealth?.wakingUp));
-        if (!localModelRef.current) {
+        if (!localModelReady) {
           try {
-            const m = await tf.loadGraphModel('/model/model.json');
-            if (active) {
-              localModelRef.current = m;
-              setLocalModelReady(true);
-            }
+            await loadLocalTriLayerModels();
+            if (active) setLocalModelReady(true);
           } catch {}
         }
       }
@@ -170,10 +170,11 @@ export default function ScanDemoModal({ onClose }) {
           setCurrentTime(video.currentTime);
           if (video.duration && !isNaN(video.duration)) setDuration(video.duration);
         }
+        const toggles = modelTogglesRef.current;
         const triData = lastTriLayerRef.current;
-        const drivablePolys = triData?.drivable_area || [];
-        const laneLines = triData?.lane_lines || [];
-        const vehicles = triData?.vehicles || [];
+        const drivablePolys = toggles.enableRoad ? (triData?.drivable_area || []) : [];
+        const laneLines = toggles.enableRoad ? (triData?.lane_lines || []) : [];
+        const vehicles = toggles.enableVehicles ? (triData?.vehicles || []) : [];
         if (drivablePolys.length > 0) {
           drivablePolys.forEach(poly => {
             if (poly.length < 3) return;
@@ -235,7 +236,7 @@ export default function ScanDemoModal({ onClose }) {
             ctx.fillText(tagText, vx + 6, Math.max(14, vy - 6));
           });
         }
-        const activeDetections = lastDetectionsRef.current;
+        const activeDetections = toggles.enableDefects ? lastDetectionsRef.current : [];
         if (activeDetections && activeDetections.length > 0) {
           activeDetections.forEach(d => {
             if (!d.bbox) return;
@@ -280,27 +281,31 @@ export default function ScanDemoModal({ onClose }) {
               const res = await predictTriLayerGpu(video, 0.15);
               if (res) {
                 lastTriLayerRef.current = res;
-                const hazs = res.hazards || res.detections || [];
+                const hazs = toggles.enableDefects ? (res.hazards || res.detections || []) : [];
                 lastDetectionsRef.current = hazs;
                 if (res.estimated_pci !== undefined) {
-                  setPciScore(res.estimated_pci);
-                  setPciRating(res.pci_rating || 'Good');
+                  setPciScore(toggles.enableDefects ? res.estimated_pci : 100);
+                  setPciRating(toggles.enableDefects ? (res.pci_rating || 'Good') : 'Good');
                 }
-                setVehiclesCount((res.vehicles || []).length);
+                setVehiclesCount(toggles.enableVehicles ? (res.vehicles || []).length : 0);
                 setHazardsCount(hazs.length);
                 if (hazs.length > 0) {
                   handleDefectLogging(hazs, video);
                 }
               }
-            } else if (localModelRef.current) {
-              const preds = runInference(localModelRef.current, video);
-              const currentDetections = await parseYoloOutputAll(preds, 0.14);
-              if (Array.isArray(preds)) preds.forEach(t => t.dispose());
-              else preds.dispose();
-              lastDetectionsRef.current = currentDetections;
-              setHazardsCount(currentDetections.length);
-              if (currentDetections.length > 0) {
-                handleDefectLogging(currentDetections, video);
+            } else if (localModelReady) {
+              const res = await predictLocalTriLayer(video, toggles);
+              if (res) {
+                lastTriLayerRef.current = res;
+                const hazs = res.hazards || [];
+                lastDetectionsRef.current = hazs;
+                setPciScore(res.estimated_pci);
+                setPciRating(res.pci_rating);
+                setVehiclesCount((res.vehicles || []).length);
+                setHazardsCount(hazs.length);
+                if (hazs.length > 0) {
+                  handleDefectLogging(hazs, video);
+                }
               }
             }
           } catch {}
@@ -420,6 +425,56 @@ export default function ScanDemoModal({ onClose }) {
               <span style={{ color: '#64748b', fontWeight: 600 }}>Vehicles: </span>
               <strong style={{ color: '#0f172a' }}>{vehiclesCount}</strong>
             </div>
+          </div>
+          <div style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(255, 255, 255, 0.94)', backdropFilter: 'blur(8px)', border: '1px solid #e2e8f0', padding: '5px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => setEnableDefects(v => !v)}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                border: `1px solid ${enableDefects ? '#111827' : '#cbd5e1'}`,
+                background: enableDefects ? '#111827' : '#ffffff',
+                color: enableDefects ? '#ffffff' : '#475569',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Road Defects
+            </button>
+            <button
+              type="button"
+              onClick={() => setEnableVehicles(v => !v)}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                border: `1px solid ${enableVehicles ? '#111827' : '#cbd5e1'}`,
+                background: enableVehicles ? '#111827' : '#ffffff',
+                color: enableVehicles ? '#ffffff' : '#475569',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Vehicle Hazard
+            </button>
+            <button
+              type="button"
+              onClick={() => setEnableRoad(v => !v)}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                border: `1px solid ${enableRoad ? '#111827' : '#cbd5e1'}`,
+                background: enableRoad ? '#111827' : '#ffffff',
+                color: enableRoad ? '#ffffff' : '#475569',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Road & Lanes
+            </button>
           </div>
           <div style={{ position: 'absolute', bottom: 14, left: 14, right: 14, background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(8px)', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.14)', opacity: engineConnected ? 1 : 0.5 }}>
             <button
