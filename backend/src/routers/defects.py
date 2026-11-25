@@ -25,7 +25,8 @@ def list_defects(limit: int = 50, status_filter: Optional[str] = None):
                 SELECT id, type, severity_score, confidence_score, status,
                        COALESCE(action_status, 'pending_review') as action_status,
                        speed_kmh, image_url, source, reviewed_by, reviewed_at,
-                       official_remarks, created_at,
+                       official_remarks, created_at, trip_id, vehicle_number,
+                       display_label, astm_code, COALESCE(is_demo, false) as is_demo,
                        ST_AsGeoJSON(location) as location_geojson
                 FROM public.hazards
             """

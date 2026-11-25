@@ -790,15 +790,35 @@ export default function OfficialDashboard() {
                 </thead>
                 <tbody>
                   {defects.map((d) => {
-                    const defectLabel = d.type === 'pothole' ? 'Pothole (ASTM 13)' : d.type === 'crack' ? 'Road Crack (ASTM 1/10)' : `${d.type} (Distress)`;
+                    const defectLabel = d.display_label || (d.type === 'pothole' ? 'Pothole (ASTM 13)' : d.type === 'crack' ? 'Road Crack (ASTM 1/10)' : `${d.type} (Distress)`);
                     const actionStatus = d.action_status || (d.status === 'verified' ? 'fit' : d.status === 'under_review' ? 'in_validation' : d.status === 'rejected' ? 'rescan_required' : 'pending_review');
                     const badgeClass = actionStatus === 'fit' ? 'gov-badge-green' : actionStatus === 'in_validation' ? 'gov-badge-blue' : actionStatus === 'rescan_required' ? 'gov-badge-red' : 'gov-badge-neutral';
                     return (
                       <tr key={d.id}>
                         <td>
-                          <div style={{ fontWeight: 800, color: 'var(--gov-text-primary)' }}>{defectLabel}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)' }}>
-                            Confidence: {Math.round((d.confidence_score || 0.85) * 100)}% • Source: {d.source || 'Vehicle Camera'}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {d.image_url && (
+                              <a href={d.image_url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+                                <img
+                                  src={d.image_url}
+                                  alt={defectLabel}
+                                  style={{ width: '56px', height: '36px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--gov-border)' }}
+                                />
+                              </a>
+                            )}
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontWeight: 800, color: 'var(--gov-text-primary)' }}>{defectLabel}</span>
+                                {d.is_demo && (
+                                  <span style={{ fontSize: '10px', fontWeight: 800, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', padding: '1px 6px', borderRadius: '8px' }}>
+                                    Demo Scan
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)' }}>
+                                Confidence: {Math.round((d.confidence_score || 0.85) * 100)}% • {d.vehicle_number || d.source || 'Vehicle Camera'}
+                              </div>
+                            </div>
                           </div>
                         </td>
                         <td>

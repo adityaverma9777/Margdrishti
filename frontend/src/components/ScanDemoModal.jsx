@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { X, Play, Pause, RotateCcw, Activity } from 'lucide-react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { X, Play, Pause, RotateCcw, Volume2, VolumeX, Activity, AlertTriangle } from 'lucide-react';
 import * as tf from '@tensorflow/tfjs';
 import { supabase } from '../supabaseClient';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
@@ -12,16 +12,20 @@ const DEMO_VIDEOS = [
 export default function ScanDemoModal({ onClose }) {
   const [selectedVideo, setSelectedVideo] = useState(DEMO_VIDEOS[0]);
   const [isPlaying, setIsPlaying] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [pciScore, setPciScore] = useState(100);
   const [pciRating, setPciRating] = useState('Good');
   const [hazardsCount, setHazardsCount] = useState(0);
   const [vehiclesCount, setVehiclesCount] = useState(0);
+  const [fcwActive, setFcwActive] = useState(false);
   const [gpuServerOnline, setGpuServerOnline] = useState(false);
   const [isWakingUp, setIsWakingUp] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const lastAlertTimeRef = useRef(0);
   const lastTriLayerRef = useRef(null);
   const lastDetectionsRef = useRef([]);
   const localModelRef = useRef(null);
@@ -38,6 +42,9 @@ export default function ScanDemoModal({ onClose }) {
       offscreen.height = 360;
       const octx = offscreen.getContext('2d');
       octx.drawImage(videoEl, 0, 0, 640, 360);
+      if (canvasRef.current) {
+        octx.drawImage(canvasRef.current, 0, 0, 640, 360);
+      }
       const blob = await new Promise(resolve => offscreen.toBlob(resolve, 'image/jpeg', 0.65));
       if (!blob) return null;
       const fileName = `${tripIdRef.current}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
@@ -67,15 +74,16 @@ export default function ScanDemoModal({ onClose }) {
           vehicle_number: 'DEMO-UNIT-01',
           type: isPothole ? 'pothole' : 'crack',
           display_label: label,
-          confidence: d.confidence ? Math.round(d.confidence * 100) : 85,
-          severity: d.severity || (isPothole ? 4 : 2),
+          confidence_score: d.confidence ? Number(Number(d.confidence).toFixed(2)) : 0.85,
+          severity_score: d.severity || (isPothole ? 4 : 2),
           image_url: photoUrl,
+          source: 'demo_dashcam_scan',
           is_demo: true,
           status: 'unverified',
           action_status: 'pending_review',
           location: 'POINT(91.7362 26.1445)'
         }]);
-      } catch {}
+      } catch { }
     }
   };
   useEffect(() => {
@@ -92,7 +100,7 @@ export default function ScanDemoModal({ onClose }) {
           is_demo: true,
           calculated_pci: 100
         }]);
-      } catch {}
+      } catch { }
     };
     initTrip();
     return () => {
@@ -104,7 +112,7 @@ export default function ScanDemoModal({ onClose }) {
         total_distance_km: 1.25,
         avg_speed_kmh: 32,
         max_speed_kmh: 45
-      }).eq('id', tripIdRef.current).then(() => {}).catch(() => {});
+      }).eq('id', tripIdRef.current).then(() => { }).catch(() => { });
     };
   }, []);
   useEffect(() => {
@@ -122,7 +130,7 @@ export default function ScanDemoModal({ onClose }) {
           try {
             const m = await tf.loadGraphModel('/model/model.json');
             if (active) localModelRef.current = m;
-          } catch {}
+          } catch { }
         }
       }
     };
@@ -133,14 +141,37 @@ export default function ScanDemoModal({ onClose }) {
       clearInterval(interval);
     };
   }, []);
-  const handleSelectVideo = (v) => {
+  const handleSelectVideo = async (v) => {
+    const prevTripId = tripIdRef.current;
+    supabase.from('survey_trips').update({
+      end_time: new Date().toISOString(),
+      status: 'completed',
+      calculated_pci: pciScoreRef.current,
+      total_distance_km: 1.25,
+      avg_speed_kmh: 32,
+      max_speed_kmh: 45
+    }).eq('id', prevTripId).then(() => {}).catch(() => {});
+    const nextTripId = `demo_${Date.now()}`;
+    tripIdRef.current = nextTripId;
+    lastSnapshotTimesRef.current = {};
     setSelectedVideo(v);
     setPciScore(100);
+    pciScoreRef.current = 100;
     setPciRating('Good');
     setHazardsCount(0);
     setVehiclesCount(0);
     lastTriLayerRef.current = null;
     lastDetectionsRef.current = [];
+    supabase.from('survey_trips').insert([{
+      id: nextTripId,
+      road_name: `Demo Footage Scan: ${v.label}`,
+      driver_name: 'AI Simulation Agent',
+      vehicle_number: 'DEMO-UNIT-01',
+      start_time: new Date().toISOString(),
+      status: 'in_progress',
+      is_demo: true,
+      calculated_pci: 100
+    }]).then(() => {}).catch(() => {});
     if (videoRef.current) {
       videoRef.current.currentTime = 0;
       videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
@@ -152,13 +183,13 @@ export default function ScanDemoModal({ onClose }) {
       videoRef.current.pause();
       setIsPlaying(false);
     } else {
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => { });
     }
   };
   const handleRestart = () => {
     if (!videoRef.current) return;
     videoRef.current.currentTime = 0;
-    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => { });
   };
   const handleSeek = (e) => {
     const val = parseFloat(e.target.value);
@@ -230,39 +261,22 @@ export default function ScanDemoModal({ onClose }) {
               vw = (veh.bbox.w / 640) * w;
               vh = (veh.bbox.h / 360) * h;
             }
-            const bracketColor = veh.color || '#30D158';
-            const bracketLen = Math.min(22, Math.min(vw, vh) * 0.35);
-            ctx.strokeStyle = bracketColor;
-            ctx.lineWidth = veh.alert_level === 'warning' ? 3.5 : 2.5;
-            ctx.beginPath();
-            ctx.moveTo(vx, vy + bracketLen);
-            ctx.lineTo(vx, vy);
-            ctx.lineTo(vx + bracketLen, vy);
-            ctx.moveTo(vx + vw - bracketLen, vy);
-            ctx.lineTo(vx + vw, vy);
-            ctx.lineTo(vx + vw, vy + bracketLen);
-            ctx.moveTo(vx, vy + vh - bracketLen);
-            ctx.lineTo(vx, vy + vh);
-            ctx.lineTo(vx + bracketLen, vy + vh);
-            ctx.moveTo(vx + vw - bracketLen, vy + vh);
-            ctx.lineTo(vx + vw, vy + vh);
-            ctx.lineTo(vx + vw, vy + vh - bracketLen);
-            ctx.stroke();
+            const boxColor = veh.alert_level === 'warning' ? '#ef4444' : veh.alert_level === 'caution' ? '#f59e0b' : '#0ea5e9';
+            ctx.strokeStyle = boxColor;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(vx, vy, vw, vh);
+            ctx.fillStyle = veh.alert_level === 'warning' ? 'rgba(239, 68, 68, 0.12)' : veh.alert_level === 'caution' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(14, 165, 233, 0.10)';
+            ctx.fillRect(vx, vy, vw, vh);
             const ttcPart = veh.ttc_s ? ` · ${veh.ttc_s}s` : '';
-            const tagLabel = `▲ ${veh.distance_m}m${ttcPart} · ${veh.status_text}`;
+            const tagText = `${veh.class_name || 'Vehicle'} · ${veh.distance_m}m${ttcPart}`;
             ctx.font = 'bold 11px Inter, -apple-system, sans-serif';
-            const tagW = ctx.measureText(tagLabel).width + 12;
-            const tagX = vx + vw / 2 - tagW / 2;
-            const tagY = Math.max(16, vy - 24);
-            ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+            const tagW = ctx.measureText(tagText).width + 12;
+            ctx.fillStyle = boxColor;
             ctx.beginPath();
-            ctx.roundRect(tagX, tagY, tagW, 20, 4);
+            ctx.roundRect(vx, Math.max(0, vy - 20), tagW, 20, 3);
             ctx.fill();
-            ctx.strokeStyle = bracketColor;
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-            ctx.fillStyle = bracketColor;
-            ctx.fillText(tagLabel, tagX + 6, tagY + 14);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(tagText, vx + 6, Math.max(14, vy - 6));
           });
         }
         const activeDetections = lastDetectionsRef.current;
@@ -317,9 +331,12 @@ export default function ScanDemoModal({ onClose }) {
                   pciScoreRef.current = res.estimated_pci;
                   setPciRating(res.pci_rating || 'Good');
                 }
+                setFcwActive(Boolean(res.fcw_alert));
                 setVehiclesCount((res.vehicles || []).length);
                 setHazardsCount(hazs.length);
+                if (res.fcw_audio) playAlertChime(880);
                 if (hazs.length > 0) {
+                  playAlertChime(660);
                   handleDefectLogging(hazs, video);
                 }
               }
@@ -331,10 +348,11 @@ export default function ScanDemoModal({ onClose }) {
               lastDetectionsRef.current = currentDetections;
               setHazardsCount(currentDetections.length);
               if (currentDetections.length > 0) {
+                playAlertChime(660);
                 handleDefectLogging(currentDetections, video);
               }
             }
-          } catch {}
+          } catch { }
           isInferringRef.current = false;
         }
       }
@@ -345,7 +363,7 @@ export default function ScanDemoModal({ onClose }) {
       stoppedRef.current = true;
       cancelAnimationFrame(animId);
     };
-  }, [gpuServerOnline]);
+  }, [gpuServerOnline, playAlertChime]);
   const formatTime = (sec) => {
     if (isNaN(sec)) return '0:00';
     const m = Math.floor(sec / 60);
@@ -388,6 +406,12 @@ export default function ScanDemoModal({ onClose }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            style={{ background: 'transparent', border: 'none', color: soundEnabled ? '#38bdf8' : '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '6px' }}
+          >
+            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          </button>
+          <button
             onClick={onClose}
             style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600 }}
           >
@@ -413,6 +437,12 @@ export default function ScanDemoModal({ onClose }) {
           height={720}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
         />
+        {fcwActive && (
+          <div style={{ position: 'absolute', top: 20, background: '#dc2626', color: '#ffffff', padding: '8px 20px', borderRadius: '6px', fontSize: '14px', fontWeight: 900, letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 0 20px rgba(220, 38, 38, 0.85)' }}>
+            <AlertTriangle size={18} />
+            <span>COLLISION WARNING — BRAKE</span>
+          </div>
+        )}
         <div style={{ position: 'absolute', top: 16, left: 16, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '14px' }}>
           <div>
             <span style={{ color: '#94a3b8' }}>PCI: </span>
