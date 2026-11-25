@@ -176,21 +176,7 @@ export default function ScanDemoModal({ onClose }) {
       const tStart = performance.now();
       const toggles = modelTogglesRef.current;
       try {
-        if (localModelReady) {
-          const res = await predictLocalTriLayer(video, toggles);
-          if (res && !stoppedRef.current) {
-            lastTriLayerRef.current = res;
-            const hazs = res.hazards || [];
-            lastDetectionsRef.current = hazs;
-            setPciScore(res.estimated_pci);
-            setPciRating(res.pci_rating);
-            setVehiclesCount((res.vehicles || []).length);
-            setHazardsCount(hazs.length);
-            if (hazs.length > 0) {
-              handleDefectLogging(hazs, video);
-            }
-          }
-        } else if (gpuServerOnline) {
+        if (gpuServerOnline) {
           const res = await predictTriLayerGpu(video, 0.15, toggles);
           if (res && !stoppedRef.current) {
             lastTriLayerRef.current = res;
@@ -206,18 +192,30 @@ export default function ScanDemoModal({ onClose }) {
               handleDefectLogging(hazs, video);
             }
           }
+        } else if (localModelReady) {
+          const res = await predictLocalTriLayer(video, toggles);
+          if (res && !stoppedRef.current) {
+            lastTriLayerRef.current = res;
+            const hazs = res.hazards || [];
+            lastDetectionsRef.current = hazs;
+            setPciScore(res.estimated_pci);
+            setPciRating(res.pci_rating);
+            setVehiclesCount((res.vehicles || []).length);
+            setHazardsCount(hazs.length);
+            if (hazs.length > 0) {
+              handleDefectLogging(hazs, video);
+            }
+          }
         }
       } catch {}
       const elapsed = Math.max(16, performance.now() - tStart);
-      emaLatencyRef.current = emaLatencyRef.current ? (emaLatencyRef.current * 0.65 + elapsed * 0.35) : elapsed;
-      const targetRate = Math.max(0.12, Math.min(1.0, Math.round((180 / emaLatencyRef.current) * 20) / 20));
-      if (videoRef.current && !stoppedRef.current) {
+      emaLatencyRef.current = emaLatencyRef.current ? (emaLatencyRef.current * 0.7 + elapsed * 0.3) : elapsed;
+      const targetRate = emaLatencyRef.current <= 250
+        ? 1.0
+        : Math.max(0.4, Math.min(1.0, Math.round((250 / emaLatencyRef.current) * 10) / 10));
+      if (videoRef.current && !stoppedRef.current && Math.abs(videoRef.current.playbackRate - targetRate) >= 0.1) {
         videoRef.current.playbackRate = targetRate;
         setSyncRate(targetRate);
-        if (syncPausedRef.current && !userPausedRef.current && videoRef.current.paused) {
-          syncPausedRef.current = false;
-          videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
-        }
       }
       isInferringRef.current = false;
     };
@@ -337,10 +335,6 @@ export default function ScanDemoModal({ onClose }) {
             ctx.fillText(tagText, bx + 6, Math.max(14, by - 6));
           });
         }
-        if (isInferringRef.current && !video.paused && !userPausedRef.current && Math.abs(video.currentTime - inferVideoTimeRef.current) > 0.25) {
-          syncPausedRef.current = true;
-          video.pause();
-        }
         if (engineConnected && !isInferringRef.current && now - lastInferTimeRef.current > 40 && video.readyState >= 2 && !userPausedRef.current && (toggles.enableDefects || toggles.enableVehicles || toggles.enableRoad)) {
           runInference(video, now);
         }
@@ -373,7 +367,7 @@ export default function ScanDemoModal({ onClose }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '15px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.2px' }}>Demo Detections on Footage</span>
               <span style={{ fontSize: '11px', background: engineConnected ? '#dcfce7' : '#fef3c7', color: engineConnected ? '#166534' : '#92400e', border: `1px solid ${engineConnected ? '#bbf7d0' : '#fde68a'}`, padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
-                {localModelReady ? 'Local Scanner Ready' : gpuServerOnline ? 'Cloud Scanner' : isWakingUp ? 'Connecting...' : 'Loading Models...'}
+                {gpuServerOnline ? 'Backend GPU Ready' : localModelReady ? 'Local Scanner Ready' : isWakingUp ? 'Connecting...' : 'Loading Models...'}
               </span>
             </div>
           </div>

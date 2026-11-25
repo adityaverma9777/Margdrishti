@@ -1,6 +1,6 @@
 import * as ort from 'onnxruntime-web';
-ort.env.wasm.wasmPaths = '/ort/';
-ort.env.wasm.numThreads = 1;
+ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+ort.env.wasm.simd = true;
 const PCI_LABELS = {
   0: { raw: 'longitudinal_transverse_crack', display: 'Longitudinal / Transverse Crack', type: 'crack', severity: 3 },
   1: { raw: 'alligator_crack', display: 'Alligator Crack', type: 'crack', severity: 4 },
