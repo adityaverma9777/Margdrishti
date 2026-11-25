@@ -7,10 +7,10 @@
   --gov-text-primary: #0f172a;
   --gov-text-secondary: #475569;
   --gov-text-muted: #64748b;
-  --gov-navy: #1e3a8a;
-  --gov-navy-hover: #1e40af;
-  --gov-blue: #0284c7;
-  --gov-blue-light: #e0f2fe;
+  --gov-navy: #111827;
+  --gov-navy-hover: #1f2937;
+  --gov-blue: #111827;
+  --gov-blue-light: #f1f5f9;
   --gov-green: #16a34a;
   --gov-green-light: #dcfce7;
   --gov-amber: #d97706;
@@ -122,9 +122,9 @@ input, select, textarea {
 }
 
 .gov-badge-blue {
-  background-color: var(--gov-blue-light);
-  color: var(--gov-blue);
-  border: 1px solid #bae6fd;
+  background-color: #f1f5f9;
+  color: #334155;
+  border: 1px solid #e2e8f0;
 }
 
 .gov-badge-green {

@@ -229,25 +229,22 @@ export default function OfficialDashboard() {
     <div className="gov-container" style={{ padding: '24px 20px', minHeight: 'calc(100vh - 60px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-navy)', letterSpacing: '-0.3px' }}>
-              Official Desk & Fleet Oversight
-            </h1>
-            <span className="gov-badge gov-badge-blue">Official Console</span>
-          </div>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.3px' }}>
+            Fleet & Survey Oversight
+          </h1>
           <p style={{ fontSize: '13px', color: 'var(--gov-text-secondary)', marginTop: '4px' }}>
-            Officer: <strong>{currentUser?.name || 'Executive Officer'}</strong> • Active State: <strong>{selectedState}</strong>
+            Active State: <strong>{selectedState}</strong>
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#ffffff', border: '1px solid var(--gov-border)', padding: '6px 12px', borderRadius: 'var(--radius-sm)' }}>
-            <Globe size={15} color="var(--gov-blue)" />
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)' }}>Jurisdiction:</span>
+            <Globe size={15} color="#0f172a" />
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)' }}>State:</span>
             <select
               value={selectedState}
               onChange={(e) => setSelectedState(e.target.value)}
-              style={{ border: 'none', background: 'transparent', fontWeight: 700, fontSize: '13px', color: 'var(--gov-navy)', outline: 'none', cursor: 'pointer' }}
+              style={{ border: 'none', background: 'transparent', fontWeight: 700, fontSize: '13px', color: '#0f172a', outline: 'none', cursor: 'pointer' }}
             >
               {STATE_OPTIONS.map(st => (
                 <option key={st} value={st}>{st}</option>
@@ -258,29 +255,6 @@ export default function OfficialDashboard() {
           <button className="gov-btn-secondary" onClick={loadData}>
             <RefreshCw size={14} />
             <span>Sync</span>
-          </button>
-          <button className="gov-btn-secondary" onClick={loadData}>
-            <RefreshCw size={14} />
-            <span>Sync</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('surveys')}
-            style={{
-              padding: '8px 14px',
-              borderRadius: 'var(--radius-sm)',
-              background: activeTab === 'surveys' ? 'var(--gov-blue)' : 'var(--gov-navy)',
-              color: '#ffffff',
-              border: 'none',
-              fontWeight: 700,
-              fontSize: '13px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <Compass size={14} />
-            <span>Visit Surveys ({trips.length})</span>
           </button>
           <button className="gov-btn-secondary" onClick={() => window.print()}>
             <Printer size={14} />
@@ -305,35 +279,35 @@ export default function OfficialDashboard() {
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
             Survey Vehicles ({selectedState})
           </div>
-          <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-navy)', marginTop: '6px' }}>
+          <div style={{ fontSize: '28px', fontWeight: 800, color: '#0f172a', marginTop: '6px' }}>
             {vehicles.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Units</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
-            Registered in {selectedState} fleet
+            Registered in {selectedState}
           </div>
         </div>
 
         <div className="gov-card" style={{ padding: '18px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
-            Network Survey Trips
+            Survey Trips
           </div>
-          <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-blue)', marginTop: '6px' }}>
-            {trips.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Trips</span>
+          <div style={{ fontSize: '28px', fontWeight: 800, color: '#0f172a', marginTop: '6px' }}>
+            {trips.filter(t => !t.is_demo).length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Trips</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
-            {trips.filter(t => !t.is_demo).length} Field Patrols • {trips.filter(t => t.is_demo).length} Demo Scans
+            {trips.filter(t => !t.is_demo && t.status === 'completed').length} Completed
           </div>
         </div>
 
         <div className="gov-card" style={{ padding: '18px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gov-text-secondary)', textTransform: 'uppercase' }}>
-            Live Defects Logged
+            Defects Logged
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--gov-red)', marginTop: '6px' }}>
             {summary ? summary.defects.total : defects.length} <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--gov-text-muted)' }}>Items</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
-            {summary ? summary.defects.pending_review : 0} Pending Verification
+            {summary ? summary.defects.pending_review : 0} Pending Review
           </div>
         </div>
 
@@ -346,7 +320,7 @@ export default function OfficialDashboard() {
             <span>{summary ? summary.defects.fit : 0} Verified Fit</span>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--gov-text-muted)', marginTop: '4px' }}>
-            {summary ? summary.defects.in_validation : 0} In Field Validation
+            {summary ? summary.defects.in_validation : 0} In Validation
           </div>
         </div>
       </div>
@@ -357,11 +331,11 @@ export default function OfficialDashboard() {
           style={{
             padding: '10px 16px',
             border: 'none',
-            borderBottom: activeTab === 'fleet' ? '3px solid var(--gov-blue)' : '3px solid transparent',
+            borderBottom: activeTab === 'fleet' ? '3px solid #111827' : '3px solid transparent',
             background: 'transparent',
             fontWeight: 700,
             fontSize: '13px',
-            color: activeTab === 'fleet' ? 'var(--gov-navy)' : 'var(--gov-text-muted)',
+            color: activeTab === 'fleet' ? '#0f172a' : 'var(--gov-text-muted)',
             cursor: 'pointer'
           }}
         >
@@ -372,26 +346,26 @@ export default function OfficialDashboard() {
           style={{
             padding: '10px 16px',
             border: 'none',
-            borderBottom: activeTab === 'surveys' ? '3px solid var(--gov-blue)' : '3px solid transparent',
+            borderBottom: activeTab === 'surveys' ? '3px solid #111827' : '3px solid transparent',
             background: 'transparent',
             fontWeight: 700,
             fontSize: '13px',
-            color: activeTab === 'surveys' ? 'var(--gov-navy)' : 'var(--gov-text-muted)',
+            color: activeTab === 'surveys' ? '#0f172a' : 'var(--gov-text-muted)',
             cursor: 'pointer'
           }}
         >
-          Visit Surveys ({trips.length})
+          Visit Surveys ({trips.filter(t => !t.is_demo).length})
         </button>
         <button
           onClick={() => setActiveTab('defects')}
           style={{
             padding: '10px 16px',
             border: 'none',
-            borderBottom: activeTab === 'defects' ? '3px solid var(--gov-blue)' : '3px solid transparent',
+            borderBottom: activeTab === 'defects' ? '3px solid #111827' : '3px solid transparent',
             background: 'transparent',
             fontWeight: 700,
             fontSize: '13px',
-            color: activeTab === 'defects' ? 'var(--gov-navy)' : 'var(--gov-text-muted)',
+            color: activeTab === 'defects' ? '#0f172a' : 'var(--gov-text-muted)',
             cursor: 'pointer'
           }}
         >
@@ -402,11 +376,11 @@ export default function OfficialDashboard() {
           style={{
             padding: '10px 16px',
             border: 'none',
-            borderBottom: activeTab === 'compliance' ? '3px solid var(--gov-blue)' : '3px solid transparent',
+            borderBottom: activeTab === 'compliance' ? '3px solid #111827' : '3px solid transparent',
             background: 'transparent',
             fontWeight: 700,
             fontSize: '13px',
-            color: activeTab === 'compliance' ? 'var(--gov-navy)' : 'var(--gov-text-muted)',
+            color: activeTab === 'compliance' ? '#0f172a' : 'var(--gov-text-muted)',
             cursor: 'pointer'
           }}
         >
@@ -807,14 +781,7 @@ export default function OfficialDashboard() {
                               </a>
                             )}
                             <div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span style={{ fontWeight: 800, color: 'var(--gov-text-primary)' }}>{defectLabel}</span>
-                                {d.is_demo && (
-                                  <span style={{ fontSize: '10px', fontWeight: 800, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', padding: '1px 6px', borderRadius: '8px' }}>
-                                    Demo Scan
-                                  </span>
-                                )}
-                              </div>
+                              <div style={{ fontWeight: 800, color: 'var(--gov-text-primary)' }}>{defectLabel}</div>
                               <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)' }}>
                                 Confidence: {Math.round((d.confidence_score || 0.85) * 100)}% • {d.vehicle_number || d.source || 'Vehicle Camera'}
                               </div>
@@ -960,53 +927,9 @@ export default function OfficialDashboard() {
 
       {activeTab === 'surveys' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div className="gov-card" style={{ padding: '16px 20px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <button
-                onClick={() => setTripFilter('all')}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '20px',
-                  border: '1px solid var(--gov-border)',
-                  background: tripFilter === 'all' ? 'var(--gov-navy)' : '#ffffff',
-                  color: tripFilter === 'all' ? '#ffffff' : 'var(--gov-text-primary)',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                All Surveys ({trips.length})
-              </button>
-              <button
-                onClick={() => setTripFilter('real')}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '20px',
-                  border: '1px solid var(--gov-border)',
-                  background: tripFilter === 'real' ? 'var(--gov-blue)' : '#ffffff',
-                  color: tripFilter === 'real' ? '#ffffff' : 'var(--gov-text-primary)',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                Field Patrols ({trips.filter(t => !t.is_demo).length})
-              </button>
-              <button
-                onClick={() => setTripFilter('demo')}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '20px',
-                  border: '1px solid var(--gov-border)',
-                  background: tripFilter === 'demo' ? '#d97706' : '#ffffff',
-                  color: tripFilter === 'demo' ? '#ffffff' : 'var(--gov-text-primary)',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                Demo Scans ({trips.filter(t => t.is_demo).length})
-              </button>
+          <div className="gov-card" style={{ padding: '14px 18px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '14px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
+              Survey Trips ({trips.filter(t => !t.is_demo).length})
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '260px' }}>
               <div style={{ position: 'relative', width: '100%' }}>
@@ -1024,8 +947,7 @@ export default function OfficialDashboard() {
           </div>
 
           {trips.filter(t => {
-            if (tripFilter === 'real' && t.is_demo) return false;
-            if (tripFilter === 'demo' && !t.is_demo) return false;
+            if (t.is_demo) return false;
             if (tripSearch) {
               const q = tripSearch.toLowerCase();
               const road = (t.road_name || '').toLowerCase();
@@ -1037,14 +959,13 @@ export default function OfficialDashboard() {
           }).length === 0 ? (
             <div className="gov-card" style={{ padding: '48px', textAlign: 'center', color: 'var(--gov-text-muted)' }}>
               <Compass size={36} color="var(--gov-border)" style={{ margin: '0 auto 12px auto' }} />
-              <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--gov-navy)' }}>No Survey Trips Found</div>
-              <div style={{ fontSize: '13px', marginTop: '4px' }}>No recorded survey trips match the current filter or search criteria.</div>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a' }}>No Survey Trips Found</div>
+              <div style={{ fontSize: '13px', marginTop: '4px' }}>Completed and active field patrol trips will appear here.</div>
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: '16px' }}>
               {trips.filter(t => {
-                if (tripFilter === 'real' && t.is_demo) return false;
-                if (tripFilter === 'demo' && !t.is_demo) return false;
+                if (t.is_demo) return false;
                 if (tripSearch) {
                   const q = tripSearch.toLowerCase();
                   const road = (t.road_name || '').toLowerCase();
@@ -1064,23 +985,16 @@ export default function OfficialDashboard() {
                     <div>
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
                         <div>
-                          <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--gov-navy)' }}>
+                          <div style={{ fontSize: '14px', fontWeight: 800, color: '#0f172a' }}>
                             {trip.road_name || 'Highway Survey Stretch'}
                           </div>
                           <div style={{ fontSize: '11px', color: 'var(--gov-text-muted)', marginTop: '2px' }}>
                             {formattedDate}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-                          <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', padding: '2px 8px', borderRadius: '10px', background: isCompleted ? '#dcfce7' : '#e0f2fe', color: isCompleted ? '#166534' : '#0369a1', border: `1px solid ${isCompleted ? '#bbf7d0' : '#bae6fd'}` }}>
-                            {isCompleted ? 'Completed' : 'In Progress'}
-                          </span>
-                          {trip.is_demo && (
-                            <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', padding: '2px 8px', borderRadius: '10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
-                              Demo Scan
-                            </span>
-                          )}
-                        </div>
+                        <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', padding: '2px 8px', borderRadius: '10px', background: isCompleted ? '#dcfce7' : '#f1f5f9', color: isCompleted ? '#166534' : '#334155', border: `1px solid ${isCompleted ? '#bbf7d0' : '#cbd5e1'}` }}>
+                          {isCompleted ? 'Completed' : 'In Progress'}
+                        </span>
                       </div>
 
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginTop: '14px', padding: '10px', background: 'var(--gov-card-subtle)', borderRadius: '6px', border: '1px solid var(--gov-border)' }}>

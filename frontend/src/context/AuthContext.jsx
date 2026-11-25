@@ -60,7 +60,7 @@ export function AuthProvider({ children }) {
       }
     }
 
-    const defaultName = identifier ? (identifier.includes('@') ? identifier.split('@')[0] : identifier) : (role === 'official' ? 'Official Officer' : 'Field Surveyor');
+    const defaultName = identifier ? (identifier.includes('@') ? identifier.split('@')[0] : identifier) : (role === 'official' ? 'Admin' : 'Surveyor');
     const userObj = {
       id: `usr_${Date.now()}`,
       name: defaultName,
