@@ -23,12 +23,17 @@ export default function ScanDemoModal({ onClose }) {
   const [enableDefects, setEnableDefects] = useState(true);
   const [enableVehicles, setEnableVehicles] = useState(true);
   const [enableRoad, setEnableRoad] = useState(true);
+  const [syncRate, setSyncRate] = useState(1);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const lastTriLayerRef = useRef(null);
   const lastDetectionsRef = useRef([]);
   const isInferringRef = useRef(false);
   const lastInferTimeRef = useRef(0);
+  const inferVideoTimeRef = useRef(0);
+  const emaLatencyRef = useRef(0);
+  const userPausedRef = useRef(false);
+  const syncPausedRef = useRef(false);
   const stoppedRef = useRef(false);
   const lastSnapshotTimesRef = useRef({});
   const modelTogglesRef = useRef({ enableDefects: true, enableVehicles: true, enableRoad: true });
@@ -126,6 +131,12 @@ export default function ScanDemoModal({ onClose }) {
   }, [engineConnected, selectedVideo]);
   const handleSelectVideo = (v) => {
     lastSnapshotTimesRef.current = {};
+    emaLatencyRef.current = 0;
+    inferVideoTimeRef.current = 0;
+    userPausedRef.current = false;
+    syncPausedRef.current = false;
+    setSyncRate(1);
+    if (videoRef.current) videoRef.current.playbackRate = 1;
     setSelectedVideo(v);
     setPciScore(100);
     setPciRating('Good');
@@ -139,14 +150,21 @@ export default function ScanDemoModal({ onClose }) {
   const togglePlay = () => {
     if (!videoRef.current || !engineConnected) return;
     if (isPlaying) {
+      userPausedRef.current = true;
+      syncPausedRef.current = false;
       videoRef.current.pause();
       setIsPlaying(false);
     } else {
+      userPausedRef.current = false;
+      syncPausedRef.current = false;
       videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     }
   };
   const handleRestart = () => {
     if (!videoRef.current || !engineConnected) return;
+    userPausedRef.current = false;
+    syncPausedRef.current = false;
+    inferVideoTimeRef.current = 0;
     videoRef.current.currentTime = 0;
     videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
   };
@@ -154,6 +172,7 @@ export default function ScanDemoModal({ onClose }) {
     if (!engineConnected) return;
     const val = parseFloat(e.target.value);
     if (videoRef.current) {
+      inferVideoTimeRef.current = val;
       videoRef.current.currentTime = val;
       setCurrentTime(val);
     }
@@ -161,7 +180,59 @@ export default function ScanDemoModal({ onClose }) {
   useEffect(() => {
     stoppedRef.current = false;
     let animId;
-    const renderLoop = async (now) => {
+    const runInference = async (video, now) => {
+      isInferringRef.current = true;
+      lastInferTimeRef.current = now;
+      inferVideoTimeRef.current = video.currentTime;
+      const tStart = performance.now();
+      const toggles = modelTogglesRef.current;
+      try {
+        if (gpuServerOnline) {
+          const res = await predictTriLayerGpu(video, 0.15, toggles);
+          if (res && !stoppedRef.current) {
+            lastTriLayerRef.current = res;
+            const hazs = toggles.enableDefects ? (res.hazards || res.detections || []) : [];
+            lastDetectionsRef.current = hazs;
+            if (res.estimated_pci !== undefined) {
+              setPciScore(toggles.enableDefects ? res.estimated_pci : 100);
+              setPciRating(toggles.enableDefects ? (res.pci_rating || 'Good') : 'Good');
+            }
+            setVehiclesCount(toggles.enableVehicles ? (res.vehicles || []).length : 0);
+            setHazardsCount(hazs.length);
+            if (hazs.length > 0) {
+              handleDefectLogging(hazs, video);
+            }
+          }
+        } else if (localModelReady) {
+          const res = await predictLocalTriLayer(video, toggles);
+          if (res && !stoppedRef.current) {
+            lastTriLayerRef.current = res;
+            const hazs = res.hazards || [];
+            lastDetectionsRef.current = hazs;
+            setPciScore(res.estimated_pci);
+            setPciRating(res.pci_rating);
+            setVehiclesCount((res.vehicles || []).length);
+            setHazardsCount(hazs.length);
+            if (hazs.length > 0) {
+              handleDefectLogging(hazs, video);
+            }
+          }
+        }
+      } catch {}
+      const elapsed = Math.max(16, performance.now() - tStart);
+      emaLatencyRef.current = emaLatencyRef.current ? (emaLatencyRef.current * 0.65 + elapsed * 0.35) : elapsed;
+      const targetRate = Math.max(0.12, Math.min(1.0, Math.round((180 / emaLatencyRef.current) * 20) / 20));
+      if (videoRef.current && !stoppedRef.current) {
+        videoRef.current.playbackRate = targetRate;
+        setSyncRate(targetRate);
+        if (syncPausedRef.current && !userPausedRef.current && videoRef.current.paused) {
+          syncPausedRef.current = false;
+          videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+        }
+      }
+      isInferringRef.current = false;
+    };
+    const renderLoop = (now) => {
       if (stoppedRef.current) return;
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -277,43 +348,12 @@ export default function ScanDemoModal({ onClose }) {
             ctx.fillText(tagText, bx + 6, Math.max(14, by - 6));
           });
         }
-        if (engineConnected && !isInferringRef.current && now - lastInferTimeRef.current > 100 && video.readyState >= 2 && !video.paused) {
-          isInferringRef.current = true;
-          lastInferTimeRef.current = now;
-          try {
-            if (gpuServerOnline) {
-              const res = await predictTriLayerGpu(video, 0.15);
-              if (res) {
-                lastTriLayerRef.current = res;
-                const hazs = toggles.enableDefects ? (res.hazards || res.detections || []) : [];
-                lastDetectionsRef.current = hazs;
-                if (res.estimated_pci !== undefined) {
-                  setPciScore(toggles.enableDefects ? res.estimated_pci : 100);
-                  setPciRating(toggles.enableDefects ? (res.pci_rating || 'Good') : 'Good');
-                }
-                setVehiclesCount(toggles.enableVehicles ? (res.vehicles || []).length : 0);
-                setHazardsCount(hazs.length);
-                if (hazs.length > 0) {
-                  handleDefectLogging(hazs, video);
-                }
-              }
-            } else if (localModelReady) {
-              const res = await predictLocalTriLayer(video, toggles);
-              if (res) {
-                lastTriLayerRef.current = res;
-                const hazs = res.hazards || [];
-                lastDetectionsRef.current = hazs;
-                setPciScore(res.estimated_pci);
-                setPciRating(res.pci_rating);
-                setVehiclesCount((res.vehicles || []).length);
-                setHazardsCount(hazs.length);
-                if (hazs.length > 0) {
-                  handleDefectLogging(hazs, video);
-                }
-              }
-            }
-          } catch {}
-          isInferringRef.current = false;
+        if (isInferringRef.current && !video.paused && !userPausedRef.current && Math.abs(video.currentTime - inferVideoTimeRef.current) > 0.25) {
+          syncPausedRef.current = true;
+          video.pause();
+        }
+        if (engineConnected && !isInferringRef.current && now - lastInferTimeRef.current > 40 && video.readyState >= 2 && !userPausedRef.current && (toggles.enableDefects || toggles.enableVehicles || toggles.enableRoad)) {
+          runInference(video, now);
         }
       }
       animId = requestAnimationFrame(renderLoop);
@@ -428,6 +468,11 @@ export default function ScanDemoModal({ onClose }) {
             <div>
               <span style={{ color: '#64748b', fontWeight: 600 }}>Vehicles: </span>
               <strong style={{ color: '#0f172a' }}>{vehiclesCount}</strong>
+            </div>
+            <div style={{ width: '1px', height: '12px', background: '#cbd5e1' }}></div>
+            <div>
+              <span style={{ color: '#64748b', fontWeight: 600 }}>Sync: </span>
+              <strong style={{ color: syncRate < 1 ? '#0284c7' : '#16a34a' }}>{syncRate.toFixed(2).replace(/\.?0+$/, '')}x</strong>
             </div>
           </div>
           <div style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(255, 255, 255, 0.94)', backdropFilter: 'blur(8px)', border: '1px solid #e2e8f0', padding: '5px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)', flexWrap: 'wrap' }}>

@@ -80,6 +80,9 @@ last_global_chime_time = 0
 class Base64FrameRequest(BaseModel):
     image: str
     confidence: Optional[float] = 0.15
+    enable_defects: Optional[bool] = True
+    enable_road: Optional[bool] = True
+    enable_vehicles: Optional[bool] = True
 def compute_iou(boxA, boxB):
     xA = max(boxA[0], boxB[0])
     yA = max(boxA[1], boxB[1])
@@ -92,70 +95,71 @@ def compute_iou(boxA, boxB):
     if denom <= 0:
         return 0.0
     return interArea / denom
-def run_tri_layer_detection(img: Image.Image, conf_threshold: float):
+def run_tri_layer_detection(img: Image.Image, conf_threshold: float, enable_defects: bool = True, enable_road: bool = True, enable_vehicles: bool = True):
     global vehicle_tracks, next_track_id, last_global_chime_time
     pci_model, veh_model, twin_model = get_vision_models()
     t0 = time.perf_counter()
     w, h = img.size
     img_np = np.array(img)
-    pci_results = pci_model.predict(
-        img,
-        imgsz=640,
-        conf=conf_threshold,
-        classes=list(range(8)),
-        device=DEVICE,
-        verbose=False
-    )
     hazards = []
     counts_by_type = {}
     deduct_points = 0
-    if pci_results and len(pci_results) > 0:
-        boxes = pci_results[0].boxes
-        for box in boxes:
-            cls_idx = int(box.cls.item())
-            if cls_idx not in PCI_CLASS_MAPPING:
-                continue
-            conf = float(box.conf.item())
-            xyxy = box.xyxy[0].tolist()
-            bx1, by1, bx2, by2 = xyxy
-            info = PCI_CLASS_MAPPING[cls_idx]
-            disp = info["display"]
-            app_t = info["type"]
-            sev = info["severity"]
-            counts_by_type[disp] = counts_by_type.get(disp, 0) + 1
-            if sev >= 4:
-                deduct_points += 15
-            elif sev == 3:
-                deduct_points += 8
-            else:
-                deduct_points += 3
-            hazards.append({
-                "class_index": cls_idx,
-                "display_label": disp,
-                "app_type": app_t,
-                "severity": sev,
-                "confidence": round(conf, 3),
-                "bbox": {
-                    "x": round(bx1, 1),
-                    "y": round(by1, 1),
-                    "w": round(bx2 - bx1, 1),
-                    "h": round(by2 - by1, 1),
-                    "cx": round((bx1 + bx2) / 2, 1),
-                    "cy": round((by1 + by2) / 2, 1),
-                    "normalized": {
-                        "x": round(bx1 / w, 4),
-                        "y": round(by1 / h, 4),
-                        "w": round((bx2 - bx1) / w, 4),
-                        "h": round((by2 - by1) / h, 4)
+    if enable_defects:
+        pci_results = pci_model.predict(
+            img,
+            imgsz=640,
+            conf=conf_threshold,
+            classes=list(range(8)),
+            device=DEVICE,
+            verbose=False
+        )
+        if pci_results and len(pci_results) > 0:
+            boxes = pci_results[0].boxes
+            for box in boxes:
+                cls_idx = int(box.cls.item())
+                if cls_idx not in PCI_CLASS_MAPPING:
+                    continue
+                conf = float(box.conf.item())
+                xyxy = box.xyxy[0].tolist()
+                bx1, by1, bx2, by2 = xyxy
+                info = PCI_CLASS_MAPPING[cls_idx]
+                disp = info["display"]
+                app_t = info["type"]
+                sev = info["severity"]
+                counts_by_type[disp] = counts_by_type.get(disp, 0) + 1
+                if sev >= 4:
+                    deduct_points += 15
+                elif sev == 3:
+                    deduct_points += 8
+                else:
+                    deduct_points += 3
+                hazards.append({
+                    "class_index": cls_idx,
+                    "display_label": disp,
+                    "app_type": app_t,
+                    "severity": sev,
+                    "confidence": round(conf, 3),
+                    "bbox": {
+                        "x": round(bx1, 1),
+                        "y": round(by1, 1),
+                        "w": round(bx2 - bx1, 1),
+                        "h": round(by2 - by1, 1),
+                        "cx": round((bx1 + bx2) / 2, 1),
+                        "cy": round((by1 + by2) / 2, 1),
+                        "normalized": {
+                            "x": round(bx1 / w, 4),
+                            "y": round(by1 / h, 4),
+                            "w": round((bx2 - bx1) / w, 4),
+                            "h": round((by2 - by1) / h, 4)
+                        }
                     }
-                }
-            })
+                })
     estimated_pci = max(0, min(100, 100 - deduct_points))
     img_mean = float(np.mean(img_np))
     img_std = float(np.std(img_np))
     drivable_area_polygons = []
     lane_line_polygons = []
-    if img_mean >= 25.0 and img_std >= 14.0:
+    if enable_road and img_mean >= 25.0 and img_std >= 14.0:
         img_resized_640 = cv2.resize(img_np, (640, 640))
         tensor_img = torch.from_numpy(img_resized_640).permute(2, 0, 1).unsqueeze(0).float().to(DEVICE) / 255.0
         with torch.no_grad():
@@ -185,7 +189,7 @@ def run_tri_layer_detection(img: Image.Image, conf_threshold: float):
         classes=list(VEHICLE_CLASSES.keys()),
         device=DEVICE,
         verbose=False
-    )
+    ) if enable_vehicles else []
     current_time = time.time()
     detected_vehicles = []
     if veh_results and len(veh_results) > 0:
@@ -342,7 +346,13 @@ async def predict_tri_layer(req: Base64FrameRequest):
         img_data = img_data.split(",", 1)[1]
     image_bytes = base64.b64decode(img_data)
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    return run_tri_layer_detection(image, req.confidence or 0.15)
+    return run_tri_layer_detection(
+        image,
+        req.confidence or 0.15,
+        enable_defects=req.enable_defects is not False,
+        enable_road=req.enable_road is not False,
+        enable_vehicles=req.enable_vehicles is not False
+    )
 @router.post("/predict/frame")
 async def predict_frame(file: UploadFile = File(...), confidence: float = Form(0.15)):
     contents = await file.read()
@@ -355,4 +365,10 @@ async def predict_base64(req: Base64FrameRequest):
         img_data = img_data.split(",", 1)[1]
     image_bytes = base64.b64decode(img_data)
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    return run_tri_layer_detection(image, req.confidence or 0.15)
+    return run_tri_layer_detection(
+        image,
+        req.confidence or 0.15,
+        enable_defects=req.enable_defects is not False,
+        enable_road=req.enable_road is not False,
+        enable_vehicles=req.enable_vehicles is not False
+    )

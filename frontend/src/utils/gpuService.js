@@ -26,21 +26,27 @@ export async function checkGpuServerHealth(force = false) {
   }
 }
 const offscreenCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-export async function predictFrameGpu(videoOrCanvas, conf = 0.15) {
+export async function predictFrameGpu(videoOrCanvas, conf = 0.15, toggles = {}) {
   if (!offscreenCanvas) return null;
   offscreenCanvas.width = 640;
   offscreenCanvas.height = 360;
   const ctx = offscreenCanvas.getContext('2d');
   ctx.drawImage(videoOrCanvas, 0, 0, 640, 360);
-  const dataUrl = offscreenCanvas.toDataURL('image/jpeg', 0.82);
+  const dataUrl = offscreenCanvas.toDataURL('image/jpeg', 0.72);
   const res = await fetch(`${DEFAULT_URL}/predict/tri_layer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: dataUrl, confidence: conf }),
+    body: JSON.stringify({
+      image: dataUrl,
+      confidence: conf,
+      enable_defects: toggles.enableDefects !== false,
+      enable_road: toggles.enableRoad !== false,
+      enable_vehicles: toggles.enableVehicles !== false
+    }),
   });
   if (!res.ok) throw new Error(`GPU inference failed: ${res.statusText}`);
   return await res.json();
 }
-export async function predictTriLayerGpu(videoOrCanvas, conf = 0.15) {
-  return predictFrameGpu(videoOrCanvas, conf);
+export async function predictTriLayerGpu(videoOrCanvas, conf = 0.15, toggles = {}) {
+  return predictFrameGpu(videoOrCanvas, conf, toggles);
 }
