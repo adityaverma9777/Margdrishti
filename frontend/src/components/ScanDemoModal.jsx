@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { X, Play, Pause, RotateCcw, Activity, Loader2, Camera } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, Loader2, Camera } from 'lucide-react';
 import * as tf from '@tensorflow/tfjs';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
 import { runInference, parseYoloOutputAll } from '../utils/tfjsParser';
@@ -330,14 +330,12 @@ export default function ScanDemoModal({ onClose }) {
       `}</style>
       <div style={{ padding: '12px 20px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#111827', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Activity size={17} color="#ffffff" />
-          </div>
+          <img src="/logo.png" alt="StreetIQ" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '15px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.2px' }}>StreetIQ Vision</span>
+              <span style={{ fontSize: '15px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.2px' }}>Demo Detections on Footage</span>
               <span style={{ fontSize: '11px', background: engineConnected ? '#dcfce7' : '#fef3c7', color: engineConnected ? '#166534' : '#92400e', border: `1px solid ${engineConnected ? '#bbf7d0' : '#fde68a'}`, padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
-                {gpuServerOnline ? 'Cloud Tri-Layer Engine Online' : localModelReady ? 'Edge Vision Engine Ready' : isWakingUp ? 'Waking up Cloud Engine...' : 'Connecting to Vision Engine...'}
+                {gpuServerOnline ? 'Connected' : localModelReady ? 'Local Scanner Ready' : isWakingUp ? 'Connecting...' : 'Connecting...'}
               </span>
             </div>
           </div>
@@ -400,10 +398,10 @@ export default function ScanDemoModal({ onClose }) {
             <div style={{ position: 'absolute', inset: 0, background: 'rgba(248, 250, 252, 0.92)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '24px', textAlign: 'center', zIndex: 10 }}>
               <Loader2 size={34} color="#111827" style={{ animation: 'spin 1s linear infinite' }} />
               <div style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a' }}>
-                {isWakingUp ? 'Waking up Cloud Vision Engine...' : 'Connecting to AI Vision Engine...'}
+                Connecting to Scan Server...
               </div>
               <div style={{ fontSize: '13px', color: '#475569', maxWidth: '380px' }}>
-                Waiting for Tri-Layer models to establish connection. Video playback and real-time scanning will start automatically once ready.
+                Establishing connection to the road scan service. Video playback will start automatically once connected.
               </div>
             </div>
           )}
