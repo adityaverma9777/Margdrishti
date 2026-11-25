@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { X, Play, Pause, RotateCcw, Activity } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, Activity, Loader2, CheckCircle2, CloudUpload, Camera } from 'lucide-react';
 import * as tf from '@tensorflow/tfjs';
 import { supabase } from '../supabaseClient';
 import { checkGpuServerHealth, predictTriLayerGpu } from '../utils/gpuService';
@@ -11,15 +11,17 @@ const DEMO_VIDEOS = [
 ];
 export default function ScanDemoModal({ onClose }) {
   const [selectedVideo, setSelectedVideo] = useState(DEMO_VIDEOS[0]);
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [pciScore, setPciScore] = useState(100);
   const [pciRating, setPciRating] = useState('Good');
   const [hazardsCount, setHazardsCount] = useState(0);
   const [vehiclesCount, setVehiclesCount] = useState(0);
   const [gpuServerOnline, setGpuServerOnline] = useState(false);
+  const [localModelReady, setLocalModelReady] = useState(false);
   const [isWakingUp, setIsWakingUp] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [detectedFeed, setDetectedFeed] = useState([]);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const lastTriLayerRef = useRef(null);
@@ -31,7 +33,14 @@ export default function ScanDemoModal({ onClose }) {
   const tripIdRef = useRef(`demo_${Date.now()}`);
   const pciScoreRef = useRef(100);
   const lastSnapshotTimesRef = useRef({});
-  const uploadDemoSnapshot = async (videoEl) => {
+  const engineConnected = gpuServerOnline || localModelReady;
+  const formatTime = (sec) => {
+    if (isNaN(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+  const captureAndUploadSnapshot = async (videoEl) => {
     try {
       const offscreen = document.createElement('canvas');
       offscreen.width = 640;
@@ -41,17 +50,11 @@ export default function ScanDemoModal({ onClose }) {
       if (canvasRef.current) {
         octx.drawImage(canvasRef.current, 0, 0, 640, 360);
       }
+      const dataUrl = offscreen.toDataURL('image/jpeg', 0.65);
       const blob = await new Promise(resolve => offscreen.toBlob(resolve, 'image/jpeg', 0.65));
-      if (!blob) return null;
-      const fileName = `${tripIdRef.current}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-      const { error: uploadErr } = await supabase.storage
-        .from('demo-scans')
-        .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true });
-      if (uploadErr) return null;
-      const { data: pubData } = supabase.storage.from('demo-scans').getPublicUrl(fileName);
-      return pubData?.publicUrl || null;
+      return { dataUrl, blob };
     } catch {
-      return null;
+      return { dataUrl: null, blob: null };
     }
   };
   const handleDefectLogging = async (defectsList, videoEl) => {
@@ -63,15 +66,44 @@ export default function ScanDemoModal({ onClose }) {
       if (now - lastTime < 6000) continue;
       lastSnapshotTimesRef.current[label] = now;
       const isPothole = label.toLowerCase().includes('pothole');
-      const photoUrl = await uploadDemoSnapshot(videoEl);
+      const confScore = d.confidence ? Number(Number(d.confidence).toFixed(2)) : 0.85;
+      const sevScore = d.severity || (isPothole ? 4 : 2);
+      const videoTimestamp = formatTime(videoEl.currentTime || 0);
+      const feedId = `feed_${now}_${Math.random().toString(36).substring(2, 7)}`;
+      const { dataUrl, blob } = await captureAndUploadSnapshot(videoEl);
+      if (dataUrl) {
+        setDetectedFeed(prev => [{
+          id: feedId,
+          label,
+          confidence: Math.round(confScore * 100),
+          severity: sevScore,
+          isPothole,
+          videoTime: videoTimestamp,
+          imageSrc: dataUrl,
+          savedToCloud: false
+        }, ...prev].slice(0, 60));
+      }
+      let photoUrl = null;
+      if (blob) {
+        try {
+          const fileName = `${tripIdRef.current}_${now}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+          const { error: uploadErr } = await supabase.storage
+            .from('demo-scans')
+            .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true });
+          if (!uploadErr) {
+            const { data: pubData } = supabase.storage.from('demo-scans').getPublicUrl(fileName);
+            photoUrl = pubData?.publicUrl || null;
+          }
+        } catch {}
+      }
       try {
         await supabase.from('hazards').insert([{
           trip_id: tripIdRef.current,
           vehicle_number: 'DEMO-UNIT-01',
           type: isPothole ? 'pothole' : 'crack',
           display_label: label,
-          confidence_score: d.confidence ? Number(Number(d.confidence).toFixed(2)) : 0.85,
-          severity_score: d.severity || (isPothole ? 4 : 2),
+          confidence_score: confScore,
+          severity_score: sevScore,
           image_url: photoUrl,
           source: 'demo_dashcam_scan',
           is_demo: true,
@@ -79,11 +111,11 @@ export default function ScanDemoModal({ onClose }) {
           action_status: 'pending_review',
           location: 'POINT(91.7362 26.1445)'
         }]);
-      } catch { }
+        setDetectedFeed(prev => prev.map(item => item.id === feedId ? { ...item, savedToCloud: true, imageSrc: photoUrl || item.imageSrc } : item));
+      } catch {}
     }
   };
   useEffect(() => {
-    let mounted = true;
     const initTrip = async () => {
       try {
         await supabase.from('survey_trips').insert([{
@@ -96,11 +128,10 @@ export default function ScanDemoModal({ onClose }) {
           is_demo: true,
           calculated_pci: 100
         }]);
-      } catch { }
+      } catch {}
     };
     initTrip();
     return () => {
-      mounted = false;
       supabase.from('survey_trips').update({
         end_time: new Date().toISOString(),
         status: 'completed',
@@ -108,7 +139,7 @@ export default function ScanDemoModal({ onClose }) {
         total_distance_km: 1.25,
         avg_speed_kmh: 32,
         max_speed_kmh: 45
-      }).eq('id', tripIdRef.current).then(() => { }).catch(() => { });
+      }).eq('id', tripIdRef.current).then(() => {}).catch(() => {});
     };
   }, []);
   useEffect(() => {
@@ -125,8 +156,11 @@ export default function ScanDemoModal({ onClose }) {
         if (!localModelRef.current) {
           try {
             const m = await tf.loadGraphModel('/model/model.json');
-            if (active) localModelRef.current = m;
-          } catch { }
+            if (active) {
+              localModelRef.current = m;
+              setLocalModelReady(true);
+            }
+          } catch {}
         }
       }
     };
@@ -137,7 +171,19 @@ export default function ScanDemoModal({ onClose }) {
       clearInterval(interval);
     };
   }, []);
-  const handleSelectVideo = async (v) => {
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (engineConnected) {
+      if (video.readyState >= 2) {
+        video.play().then(() => setIsPlaying(true)).catch(() => {});
+      }
+    } else {
+      video.pause();
+      setIsPlaying(false);
+    }
+  }, [engineConnected, selectedVideo]);
+  const handleSelectVideo = (v) => {
     const prevTripId = tripIdRef.current;
     supabase.from('survey_trips').update({
       end_time: new Date().toISOString(),
@@ -156,6 +202,8 @@ export default function ScanDemoModal({ onClose }) {
     setPciRating('Good');
     setHazardsCount(0);
     setVehiclesCount(0);
+    setDetectedFeed([]);
+    setCurrentTime(0);
     lastTriLayerRef.current = null;
     lastDetectionsRef.current = [];
     supabase.from('survey_trips').insert([{
@@ -168,26 +216,23 @@ export default function ScanDemoModal({ onClose }) {
       is_demo: true,
       calculated_pci: 100
     }]).then(() => {}).catch(() => {});
-    if (videoRef.current) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
-    }
   };
   const togglePlay = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !engineConnected) return;
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
     } else {
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => { });
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     }
   };
   const handleRestart = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !engineConnected) return;
     videoRef.current.currentTime = 0;
-    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => { });
+    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
   };
   const handleSeek = (e) => {
+    if (!engineConnected) return;
     const val = parseFloat(e.target.value);
     if (videoRef.current) {
       videoRef.current.currentTime = val;
@@ -312,7 +357,7 @@ export default function ScanDemoModal({ onClose }) {
             ctx.fillText(tagText, bx + 6, Math.max(14, by - 6));
           });
         }
-        if (!isInferringRef.current && now - lastInferTimeRef.current > 100 && video.readyState >= 2 && !video.paused) {
+        if (engineConnected && !isInferringRef.current && now - lastInferTimeRef.current > 100 && video.readyState >= 2 && !video.paused) {
           isInferringRef.current = true;
           lastInferTimeRef.current = now;
           try {
@@ -344,7 +389,7 @@ export default function ScanDemoModal({ onClose }) {
                 handleDefectLogging(currentDetections, video);
               }
             }
-          } catch { }
+          } catch {}
           isInferringRef.current = false;
         }
       }
@@ -355,21 +400,26 @@ export default function ScanDemoModal({ onClose }) {
       stoppedRef.current = true;
       cancelAnimationFrame(animId);
     };
-  }, [gpuServerOnline]);
-  const formatTime = (sec) => {
-    if (isNaN(sec)) return '0:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
+  }, [gpuServerOnline, engineConnected]);
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#0a0f1d', display: 'flex', flexDirection: 'column', color: '#ffffff', fontFamily: "'Inter', -apple-system, sans-serif" }}>
-      <div style={{ padding: '12px 20px', background: '#0f172a', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+      <style>{`
+        .scan-demo-body { display: flex; flex: 1; min-height: 0; overflow: hidden; flex-direction: row; }
+        .scan-demo-video-pane { flex: 0 0 70%; min-width: 0; min-height: 0; position: relative; background: #000000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .scan-demo-feed-pane { flex: 0 0 30%; min-width: 0; min-height: 0; background: #0f172a; border-left: 1px solid #1e293b; display: flex; flex-direction: column; }
+        @media (max-width: 900px) {
+          .scan-demo-body { flex-direction: column; }
+          .scan-demo-video-pane { flex: 0 0 54%; width: 100%; }
+          .scan-demo-feed-pane { flex: 1 1 46%; width: 100%; border-left: none; border-top: 1px solid #1e293b; }
+        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+      <div style={{ padding: '10px 18px', background: '#0f172a', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Activity size={18} color="#38bdf8" />
           <span style={{ fontSize: '15px', fontWeight: 800, color: '#f8fafc' }}>StreetIQ Vision</span>
-          <span style={{ fontSize: '11px', background: gpuServerOnline ? 'rgba(34, 197, 94, 0.2)' : 'rgba(234, 179, 8, 0.2)', color: gpuServerOnline ? '#4ade80' : '#facc15', border: `1px solid ${gpuServerOnline ? 'rgba(34, 197, 94, 0.4)' : 'rgba(234, 179, 8, 0.4)'}`, padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
-            {gpuServerOnline ? 'Cloud Tri-Layer Engine Online' : isWakingUp ? 'Waking up Cloud Engine...' : 'Connecting to Cloud Engine...'}
+          <span style={{ fontSize: '11px', background: engineConnected ? 'rgba(34, 197, 94, 0.2)' : 'rgba(234, 179, 8, 0.2)', color: engineConnected ? '#4ade80' : '#facc15', border: `1px solid ${engineConnected ? 'rgba(34, 197, 94, 0.4)' : 'rgba(234, 179, 8, 0.4)'}`, padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
+            {gpuServerOnline ? 'Cloud Tri-Layer Engine Online' : localModelReady ? 'Edge Vision Engine Ready' : isWakingUp ? 'Waking up Cloud Engine...' : 'Connecting to Vision Engine...'}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#020617', padding: '4px', borderRadius: '8px', border: '1px solid #1e293b' }}>
@@ -396,74 +446,149 @@ export default function ScanDemoModal({ onClose }) {
             );
           })}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            onClick={onClose}
-            style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600 }}
-          >
-            <X size={15} />
-            <span>Close</span>
-          </button>
-        </div>
+        <button
+          onClick={onClose}
+          style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600 }}
+        >
+          <X size={15} />
+          <span>Close</span>
+        </button>
       </div>
-      <div style={{ flex: 1, minHeight: 0, position: 'relative', background: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-        <video
-          ref={videoRef}
-          key={selectedVideo.src}
-          src={selectedVideo.src}
-          playsInline
-          muted
-          loop
-          autoPlay
-          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-        />
-        <canvas
-          ref={canvasRef}
-          width={1280}
-          height={720}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
-        />
-        <div style={{ position: 'absolute', top: 16, left: 16, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div>
-            <span style={{ color: '#94a3b8' }}>PCI: </span>
-            <strong style={{ color: pciScore >= 80 ? '#4ade80' : pciScore >= 65 ? '#facc15' : '#fb923c' }}>{pciScore}/100 ({pciRating})</strong>
+      <div className="scan-demo-body">
+        <div className="scan-demo-video-pane">
+          <video
+            ref={videoRef}
+            key={selectedVideo.src}
+            src={selectedVideo.src}
+            playsInline
+            muted
+            loop
+            onCanPlay={() => {
+              if (engineConnected && videoRef.current && videoRef.current.paused) {
+                videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+              }
+            }}
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          />
+          <canvas
+            ref={canvasRef}
+            width={1280}
+            height={720}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
+          />
+          {!engineConnected && (
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(2, 6, 23, 0.85)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '24px', textAlign: 'center', zIndex: 10 }}>
+              <Loader2 size={36} color="#38bdf8" style={{ animation: 'spin 1s linear infinite' }} />
+              <div style={{ fontSize: '16px', fontWeight: 800, color: '#f8fafc' }}>
+                {isWakingUp ? 'Waking up Cloud Vision Engine...' : 'Connecting to AI Vision Engine...'}
+              </div>
+              <div style={{ fontSize: '13px', color: '#94a3b8', maxWidth: '380px' }}>
+                Waiting for Tri-Layer models to establish connection. Video playback and real-time scanning will start automatically once ready.
+              </div>
+            </div>
+          )}
+          <div style={{ position: 'absolute', top: 14, left: 14, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div>
+              <span style={{ color: '#94a3b8' }}>PCI: </span>
+              <strong style={{ color: pciScore >= 80 ? '#4ade80' : pciScore >= 65 ? '#facc15' : '#fb923c' }}>{pciScore}/100 ({pciRating})</strong>
+            </div>
+            <div style={{ width: '1px', height: '12px', background: '#334155' }}></div>
+            <div>
+              <span style={{ color: '#94a3b8' }}>Hazards: </span>
+              <strong style={{ color: '#ffffff' }}>{hazardsCount}</strong>
+            </div>
+            <div style={{ width: '1px', height: '12px', background: '#334155' }}></div>
+            <div>
+              <span style={{ color: '#94a3b8' }}>Vehicles: </span>
+              <strong style={{ color: '#ffffff' }}>{vehiclesCount}</strong>
+            </div>
           </div>
-          <div style={{ width: '1px', height: '12px', background: '#334155' }}></div>
-          <div>
-            <span style={{ color: '#94a3b8' }}>Hazards: </span>
-            <strong style={{ color: '#ffffff' }}>{hazardsCount}</strong>
-          </div>
-          <div style={{ width: '1px', height: '12px', background: '#334155' }}></div>
-          <div>
-            <span style={{ color: '#94a3b8' }}>Vehicles: </span>
-            <strong style={{ color: '#ffffff' }}>{vehiclesCount}</strong>
+          <div style={{ position: 'absolute', bottom: 14, left: 14, right: 14, background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(8px)', border: '1px solid #334155', borderRadius: '8px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '12px', opacity: engineConnected ? 1 : 0.5 }}>
+            <button
+              onClick={togglePlay}
+              disabled={!engineConnected}
+              style={{ width: '32px', height: '32px', borderRadius: '6px', background: '#0284c7', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: engineConnected ? 'pointer' : 'not-allowed' }}
+            >
+              {isPlaying ? <Pause size={15} /> : <Play size={15} />}
+            </button>
+            <button
+              onClick={handleRestart}
+              disabled={!engineConnected}
+              style={{ width: '32px', height: '32px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: engineConnected ? 'pointer' : 'not-allowed' }}
+            >
+              <RotateCcw size={14} />
+            </button>
+            <div style={{ fontSize: '11px', color: '#94a3b8', minWidth: '70px' }}>
+              <span>{formatTime(currentTime)}</span> / <span>{formatTime(duration)}</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={duration || 100}
+              step={0.1}
+              value={currentTime}
+              onChange={handleSeek}
+              disabled={!engineConnected}
+              style={{ flex: 1, cursor: engineConnected ? 'pointer' : 'not-allowed', accentColor: '#38bdf8' }}
+            />
           </div>
         </div>
-        <div style={{ position: 'absolute', bottom: 16, left: 16, right: 16, background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(8px)', border: '1px solid #334155', borderRadius: '8px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button
-            onClick={togglePlay}
-            style={{ width: '32px', height: '32px', borderRadius: '6px', background: '#0284c7', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-          >
-            {isPlaying ? <Pause size={15} /> : <Play size={15} />}
-          </button>
-          <button
-            onClick={handleRestart}
-            style={{ width: '32px', height: '32px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-          >
-            <RotateCcw size={14} />
-          </button>
-          <div style={{ fontSize: '11px', color: '#94a3b8', minWidth: '70px' }}>
-            <span>{formatTime(currentTime)}</span> / <span>{formatTime(duration)}</span>
+        <div className="scan-demo-feed-pane">
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0b1221' }}>
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 800, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Camera size={15} color="#38bdf8" />
+                <span>Live Detections</span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+                Compressed snapshots logged in real time
+              </div>
+            </div>
+            <span style={{ fontSize: '12px', fontWeight: 800, background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.35)', padding: '2px 10px', borderRadius: '12px' }}>
+              {detectedFeed.length}
+            </span>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={duration || 100}
-            step={0.1}
-            value={currentTime}
-            onChange={handleSeek}
-            style={{ flex: 1, cursor: 'pointer', accentColor: '#38bdf8' }}
-          />
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {detectedFeed.length === 0 ? (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '28px 16px', color: '#64748b' }}>
+                <Camera size={28} color="#334155" style={{ marginBottom: '10px' }} />
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8' }}>
+                  {engineConnected ? 'Scanning Roadway...' : 'Waiting for Connection...'}
+                </div>
+                <div style={{ fontSize: '11px', marginTop: '4px', maxWidth: '220px', lineHeight: '1.45' }}>
+                  Detected potholes and surface cracks will appear here with captured frames as the footage plays.
+                </div>
+              </div>
+            ) : (
+              detectedFeed.map((item) => (
+                <div key={item.id} style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
+                  <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#020617' }}>
+                    <img
+                      src={item.imageSrc}
+                      alt={item.label}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
+                    <span style={{ position: 'absolute', top: '6px', left: '6px', fontSize: '10px', fontWeight: 800, padding: '2px 7px', borderRadius: '4px', background: item.isPothole ? '#ef4444' : '#f59e0b', color: '#ffffff' }}>
+                      Sev {item.severity}/5
+                    </span>
+                    <span style={{ position: 'absolute', top: '6px', right: '6px', fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '4px', background: 'rgba(15, 23, 42, 0.85)', color: '#e2e8f0' }}>
+                      {item.videoTime}
+                    </span>
+                  </div>
+                  <div style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <div>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#f8fafc' }}>{item.label}</div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>{item.confidence}% confidence</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', fontWeight: 700, color: item.savedToCloud ? '#4ade80' : '#38bdf8' }}>
+                      {item.savedToCloud ? <CheckCircle2 size={12} /> : <CloudUpload size={12} />}
+                      <span>{item.savedToCloud ? 'Saved' : 'Syncing'}</span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>
