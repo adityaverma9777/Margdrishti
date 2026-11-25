@@ -8,8 +8,6 @@ dist/
 .env.local
 .DS_Store
 Thumbs.db
-*.mp4
-demo_scans/
 *.log
 __pycache__/
 **/__pycache__/
