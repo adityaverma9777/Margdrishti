@@ -18,6 +18,7 @@ import FleetOverviewMap from '../components/FleetOverviewMap';
 import StretchPlannerMap from '../components/StretchPlannerMap';
 import VehicleTaskStretchMap from '../components/VehicleTaskStretchMap';
 import SurveyTripDetailModal from '../components/SurveyTripDetailModal';
+import PrintReportModal from '../components/PrintReportModal';
 import { STATE_COORDINATES } from '../utils/routingEngine';
 
 const STATE_OPTIONS = Object.keys(STATE_COORDINATES);
@@ -39,6 +40,7 @@ export default function OfficialDashboard() {
 
   const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedDefectForAudit, setSelectedDefectForAudit] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
@@ -256,7 +258,7 @@ export default function OfficialDashboard() {
             <RefreshCw size={14} />
             <span>Sync</span>
           </button>
-          <button className="gov-btn-secondary" onClick={() => window.print()}>
+          <button className="gov-btn-secondary" onClick={() => setShowPrintModal(true)}>
             <Printer size={14} />
             <span>Print Report</span>
           </button>
@@ -1297,6 +1299,16 @@ export default function OfficialDashboard() {
         <SurveyTripDetailModal
           trip={selectedTripForModal}
           onClose={() => setSelectedTripForModal(null)}
+        />
+      )}
+
+      {showPrintModal && (
+        <PrintReportModal
+          vehicles={vehicles}
+          trips={trips}
+          defects={defects}
+          selectedState={selectedState}
+          onClose={() => setShowPrintModal(false)}
         />
       )}
     </div>
