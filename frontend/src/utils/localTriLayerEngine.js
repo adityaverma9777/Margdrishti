@@ -1,8 +1,18 @@
-import * as tf from '@tensorflow/tfjs';
 import * as ort from 'onnxruntime-web';
-import { runInference, parseYoloOutputAll } from './tfjsParser';
 ort.env.wasm.wasmPaths = '/ort/';
 ort.env.wasm.numThreads = 1;
+const PCI_LABELS = {
+  0: { raw: 'longitudinal_transverse_crack', display: 'Longitudinal / Transverse Crack', type: 'crack', severity: 3 },
+  1: { raw: 'alligator_crack', display: 'Alligator Crack', type: 'crack', severity: 4 },
+  2: { raw: 'block_crack', display: 'Block Crack', type: 'crack', severity: 3 },
+  3: { raw: 'patching', display: 'Patching', type: 'patch', severity: 2 },
+  4: { raw: 'pothole', display: 'Pothole', type: 'pothole', severity: 5 },
+  5: { raw: 'weathering_raveling', display: 'Weathering / Raveling', type: 'surface_damage', severity: 2 },
+  6: { raw: 'lane_shoulder_drop_off', display: 'Lane / Shoulder Drop-off', type: 'shoulder_drop', severity: 4 },
+  7: { raw: 'marking_manhole', display: 'Marking / Manhole', type: 'manhole', severity: 2 },
+  8: { raw: 'edge_crack', display: 'Edge Crack', type: 'crack', severity: 3 },
+  9: { raw: 'bumps_and_sags', display: 'Bumps and Sags', type: 'surface_damage', severity: 3 }
+};
 const VEHICLE_META = {
   0: { name: 'Pedestrian', height: 1.7 },
   1: { name: 'Bicycle', height: 1.4 },
@@ -11,7 +21,7 @@ const VEHICLE_META = {
   5: { name: 'Bus', height: 3.2 },
   7: { name: 'Truck', height: 3.0 }
 };
-let defectModel = null;
+let pciSession = null;
 let twinLiteSession = null;
 let vehicleSession = null;
 let loadingPromise = null;
@@ -19,16 +29,16 @@ const prepCanvas = typeof document !== 'undefined' ? document.createElement('can
 let vehicleTracks = {};
 let nextTrackId = 1;
 export async function loadLocalTriLayerModels() {
-  if (defectModel && twinLiteSession && vehicleSession) {
-    return { defectModel, twinLiteSession, vehicleSession };
+  if (pciSession && twinLiteSession && vehicleSession) {
+    return { defectModel: pciSession, twinLiteSession, vehicleSession };
   }
   if (loadingPromise) return loadingPromise;
   loadingPromise = (async () => {
     const tasks = [];
-    if (!defectModel) {
+    if (!pciSession) {
       tasks.push(
-        tf.loadGraphModel('/model/model.json')
-          .then(m => { defectModel = m; })
+        ort.InferenceSession.create('/models/yolo11l_pci.onnx', { executionProviders: ['wasm'] })
+          .then(s => { pciSession = s; })
           .catch(() => {})
       );
     }
@@ -48,7 +58,7 @@ export async function loadLocalTriLayerModels() {
     }
     await Promise.all(tasks);
     loadingPromise = null;
-    return { defectModel, twinLiteSession, vehicleSession };
+    return { defectModel: pciSession, twinLiteSession, vehicleSession };
   })();
   return loadingPromise;
 }
@@ -156,6 +166,75 @@ function computeIoU(a, b) {
   const denom = areaA + areaB - inter;
   return denom > 0 ? inter / denom : 0;
 }
+function nms(candidates, iouThresh = 0.45) {
+  candidates.sort((a, b) => b.conf - a.conf);
+  const selected = [];
+  for (const cand of candidates) {
+    let keep = true;
+    for (const s of selected) {
+      if (computeIoU(cand.xyxy, s.xyxy) > iouThresh) {
+        keep = false;
+        break;
+      }
+    }
+    if (keep) selected.push(cand);
+  }
+  return selected;
+}
+function parsePciDetections(outputData, threshold = 0.15) {
+  const numAnchors = 8400;
+  const numClasses = 10;
+  const candidates = [];
+  for (let i = 0; i < numAnchors; i++) {
+    let bestCls = -1;
+    let bestScore = threshold;
+    for (let c = 0; c < numClasses; c++) {
+      const score = outputData[(4 + c) * numAnchors + i];
+      if (score > bestScore) {
+        bestScore = score;
+        bestCls = c;
+      }
+    }
+    if (bestCls === -1) continue;
+    const cx = outputData[0 * numAnchors + i];
+    const cy = outputData[1 * numAnchors + i];
+    const bw = outputData[2 * numAnchors + i];
+    const bh = outputData[3 * numAnchors + i];
+    if (bw < 8 || bh < 8) continue;
+    const x1 = cx - bw / 2;
+    const y1 = cy - bh / 2;
+    const x2 = cx + bw / 2;
+    const y2 = cy + bh / 2;
+    const info = PCI_LABELS[bestCls] || { raw: 'unknown', display: 'Unknown', type: 'other', severity: 2 };
+    candidates.push({
+      conf: bestScore,
+      xyxy: [x1, y1, x2, y2],
+      bw, bh,
+      classIndex: bestCls,
+      display_label: info.display,
+      displayLabel: info.display,
+      className: info.type,
+      app_type: info.type,
+      severity: info.severity,
+      confidence: bestScore,
+      bbox: {
+        cx: Math.round(cx * 10) / 10,
+        cy: Math.round(cy * 10) / 10,
+        w: Math.round(bw * 10) / 10,
+        h: Math.round(bh * 10) / 10,
+        x: Math.round(x1 * 10) / 10,
+        y: Math.round(y1 * 10) / 10,
+        normalized: {
+          x: Number((x1 / 640).toFixed(4)),
+          y: Number((y1 / 640).toFixed(4)),
+          w: Number((bw / 640).toFixed(4)),
+          h: Number((bh / 640).toFixed(4))
+        }
+      }
+    });
+  }
+  return nms(candidates, 0.45);
+}
 function parseVehicleDetections(outputData) {
   const numAnchors = 8400;
   const targetClasses = Object.keys(VEHICLE_META).map(Number);
@@ -182,42 +261,29 @@ function parseVehicleDetections(outputData) {
     const y2 = cy + bh / 2;
     candidates.push({ clsId: bestCls, conf: bestScore, xyxy: [x1, y1, x2, y2], bw, bh });
   }
-  candidates.sort((a, b) => b.conf - a.conf);
-  const selected = [];
-  for (const cand of candidates) {
-    let keep = true;
-    for (const s of selected) {
-      if (computeIoU(cand.xyxy, s.xyxy) > 0.45) {
-        keep = false;
-        break;
-      }
-    }
-    if (keep) selected.push(cand);
-  }
+  const selected = nms(candidates, 0.45);
   const now = Date.now() / 1000;
   const matchedIds = new Set();
   const tracked = [];
   for (const det of selected) {
     let bestId = null;
-    let bestIou = 0.20;
-    for (const [tid, trk] of Object.entries(vehicleTracks)) {
+    let bestIoU = 0.20;
+    for (const tid of Object.keys(vehicleTracks)) {
       if (matchedIds.has(tid)) continue;
-      const iou = computeIoU(det.xyxy, trk.xyxy);
-      if (iou > bestIou) {
-        bestIou = iou;
-        bestId = tid;
-      }
+      const iou = computeIoU(det.xyxy, vehicleTracks[tid].xyxy);
+      if (iou > bestIoU) { bestIoU = iou; bestId = tid; }
     }
     let assignedId = bestId;
     if (!assignedId) {
       assignedId = String(nextTrackId++);
-      vehicleTracks[assignedId] = { xyxy: det.xyxy, h: det.bh, t: now, ttc: 999, lastDhDt: 0 };
+      vehicleTracks[assignedId] = { clsId: det.clsId, xyxy: det.xyxy, h: det.bh, t: now, ttc: 999, lastDhDt: 0 };
     } else {
       const prev = vehicleTracks[assignedId];
       const dt = Math.max(0.01, now - prev.t);
-      const dhDt = (det.bh - prev.h) / dt;
+      const dh = det.bh - prev.h;
+      const dhDt = dh / dt;
       const smoothed = 0.65 * dhDt + 0.35 * prev.lastDhDt;
-      const ttc = smoothed > 1.5 ? Math.round((det.bh / smoothed) * 10) / 10 : 999;
+      const ttc = smoothed > 1.5 ? Math.round(det.bh / smoothed * 10) / 10 : 999;
       prev.xyxy = det.xyxy;
       prev.h = det.bh;
       prev.t = now;
@@ -226,26 +292,31 @@ function parseVehicleDetections(outputData) {
     }
     matchedIds.add(assignedId);
     const meta = VEHICLE_META[det.clsId];
-    const distM = Math.round(Math.max(2, Math.min(120, (650 * meta.height) / Math.max(1, det.bh))) * 10) / 10;
+    const focalPx = 650;
+    const distM = Math.round(Math.max(2, Math.min(120, (focalPx * meta.height) / Math.max(1, det.bh))) * 10) / 10;
     const ttcVal = vehicleTracks[assignedId].ttc;
     let alertLevel = 'safe';
     let statusText = 'Safe';
-    if (ttcVal < 2.0 && distM < 35.0) {
-      alertLevel = 'warning';
-      statusText = 'Warning';
-    } else if (ttcVal <= 3.5 && distM < 50.0) {
-      alertLevel = 'caution';
-      statusText = 'Approaching';
+    let color = '#30D158';
+    if (ttcVal < 2.0 && distM < 35) {
+      alertLevel = 'warning'; statusText = 'COLLISION WARNING'; color = '#FF453A';
+    } else if (ttcVal <= 3.5 && distM < 50) {
+      alertLevel = 'caution'; statusText = 'APPROACHING'; color = '#FF9F0A';
     }
     tracked.push({
-      track_id: assignedId,
+      track_id: Number(assignedId),
       class_name: meta.name,
       confidence: Math.round(det.conf * 100) / 100,
       distance_m: distM,
       ttc_s: ttcVal < 100 ? ttcVal : null,
       alert_level: alertLevel,
       status_text: statusText,
+      color,
       bbox: {
+        x: Math.round(det.xyxy[0] * 10) / 10,
+        y: Math.round(det.xyxy[1] * 10) / 10,
+        w: Math.round(det.bw * 10) / 10,
+        h: Math.round(det.bh * 10) / 10,
         normalized: {
           x: Number((det.xyxy[0] / 640).toFixed(4)),
           y: Number((det.xyxy[1] / 640).toFixed(4)),
@@ -268,12 +339,15 @@ export async function predictLocalTriLayer(videoEl, options = {}) {
   let laneLines = [];
   let vehicles = [];
   let deductPoints = 0;
-  if (enableDefects && defectModel) {
+  const prep = extractNCHWTensor640(videoEl);
+  if (!prep) {
+    return { hazards: [], drivable_area: [], lane_lines: [], vehicles: [], estimated_pci: 100, pci_rating: 'Good' };
+  }
+  if (enableDefects && pciSession) {
     try {
-      const preds = runInference(defectModel, videoEl);
-      hazards = await parseYoloOutputAll(preds, 0.14);
-      if (Array.isArray(preds)) preds.forEach(t => t.dispose());
-      else preds.dispose();
+      const out = await pciSession.run({ images: prep.tensor });
+      const outName = pciSession.outputNames[0];
+      hazards = parsePciDetections(out[outName].data, 0.15);
       for (const h of hazards) {
         const sev = h.severity || 2;
         if (sev >= 4) deductPoints += 15;
@@ -282,30 +356,26 @@ export async function predictLocalTriLayer(videoEl, options = {}) {
       }
     } catch {}
   }
-  if ((enableRoad && twinLiteSession) || (enableVehicles && vehicleSession)) {
-    const prep = extractNCHWTensor640(videoEl);
-    if (prep) {
-      if (enableRoad && twinLiteSession && !prep.isDark) {
-        try {
-          const out = await twinLiteSession.run({ images: prep.tensor });
-          const seg = extractDrivableAndLanes(out.da_out.data, out.ll_out.data);
-          drivableArea = seg.drivableArea;
-          laneLines = seg.laneLines;
-        } catch {}
-      }
-      if (enableVehicles && vehicleSession) {
-        try {
-          const out = await vehicleSession.run({ images: prep.tensor });
-          const outName = vehicleSession.outputNames[0];
-          vehicles = parseVehicleDetections(out[outName].data);
-        } catch {}
-      }
-    }
+  if (enableRoad && twinLiteSession && !prep.isDark) {
+    try {
+      const out = await twinLiteSession.run({ images: prep.tensor });
+      const seg = extractDrivableAndLanes(out.da_out.data, out.ll_out.data);
+      drivableArea = seg.drivableArea;
+      laneLines = seg.laneLines;
+    } catch {}
+  }
+  if (enableVehicles && vehicleSession) {
+    try {
+      const out = await vehicleSession.run({ images: prep.tensor });
+      const outName = vehicleSession.outputNames[0];
+      vehicles = parseVehicleDetections(out[outName].data);
+    } catch {}
   }
   const estimatedPci = Math.max(0, Math.min(100, 100 - deductPoints));
   const pciRating = estimatedPci >= 85 ? 'Good' : estimatedPci >= 70 ? 'Satisfactory' : estimatedPci >= 55 ? 'Fair' : estimatedPci >= 40 ? 'Poor' : 'Serious';
   return {
     hazards,
+    detections: hazards,
     drivable_area: drivableArea,
     lane_lines: laneLines,
     vehicles,
