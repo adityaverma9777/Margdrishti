@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Car, Building2, ArrowRight, Activity, Sparkles } from 'lucide-react';
+import { Car, Building2, ArrowRight, PlayCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ScanDemoModal from '../components/ScanDemoModal';
 export default function LoginPage() {
@@ -15,14 +15,14 @@ export default function LoginPage() {
   };
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px', background: '#f8fafc' }}>
-      <div style={{ width: '100%', maxWidth: '380px' }}>
+      <div style={{ width: '100%', maxWidth: '390px' }}>
         <div style={{ textAlign: 'center', marginBottom: '20px' }}>
           <img src="/logo.png" alt="StreetIQ" style={{ width: '48px', height: '48px', objectFit: 'contain', margin: '0 auto 8px' }} />
-          <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--gov-navy)', letterSpacing: '-0.3px' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.3px' }}>
             StreetIQ Gov
           </h1>
         </div>
-        <div className="gov-card" style={{ padding: '24px' }}>
+        <div className="gov-card" style={{ padding: '24px', width: '100%' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '18px' }}>
             <button
               type="button"
@@ -34,15 +34,15 @@ export default function LoginPage() {
                 gap: '6px',
                 padding: '10px 8px',
                 borderRadius: 'var(--radius-sm)',
-                border: `1.5px solid ${selectedRole === 'surveyor' ? 'var(--gov-blue)' : 'var(--gov-border)'}`,
-                background: selectedRole === 'surveyor' ? '#f0f9ff' : '#ffffff',
-                color: selectedRole === 'surveyor' ? 'var(--gov-navy)' : 'var(--gov-text-secondary)',
+                border: `1.5px solid ${selectedRole === 'surveyor' ? '#111827' : '#e2e8f0'}`,
+                background: selectedRole === 'surveyor' ? '#111827' : '#ffffff',
+                color: selectedRole === 'surveyor' ? '#ffffff' : '#475569',
                 cursor: 'pointer',
                 fontWeight: 600,
                 fontSize: '13px'
               }}
             >
-              <Car size={16} color={selectedRole === 'surveyor' ? 'var(--gov-blue)' : 'var(--gov-text-muted)'} />
+              <Car size={16} color={selectedRole === 'surveyor' ? '#ffffff' : '#64748b'} />
               <span>Surveyor</span>
             </button>
             <button
@@ -55,59 +55,75 @@ export default function LoginPage() {
                 gap: '6px',
                 padding: '10px 8px',
                 borderRadius: 'var(--radius-sm)',
-                border: `1.5px solid ${selectedRole === 'official' ? 'var(--gov-blue)' : 'var(--gov-border)'}`,
-                background: selectedRole === 'official' ? '#f0f9ff' : '#ffffff',
-                color: selectedRole === 'official' ? 'var(--gov-navy)' : 'var(--gov-text-secondary)',
+                border: `1.5px solid ${selectedRole === 'official' ? '#111827' : '#e2e8f0'}`,
+                background: selectedRole === 'official' ? '#111827' : '#ffffff',
+                color: selectedRole === 'official' ? '#ffffff' : '#475569',
                 cursor: 'pointer',
                 fontWeight: 600,
                 fontSize: '13px'
               }}
             >
-              <Building2 size={16} color={selectedRole === 'official' ? 'var(--gov-blue)' : 'var(--gov-text-muted)'} />
+              <Building2 size={16} color={selectedRole === 'official' ? '#ffffff' : '#64748b'} />
               <span>Official / Admin</span>
             </button>
           </div>
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div>
-              <input
-                type="text"
-                className="gov-input"
-                placeholder="Username / Email"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-              />
-            </div>
-            <div>
-              <input
-                type="password"
-                className="gov-input"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-            {selectedRole === 'surveyor' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: '150px' }}>
               <div>
                 <input
                   type="text"
                   className="gov-input"
-                  placeholder="Vehicle Number (e.g. AS-01-BX-4021)"
-                  value={vehicleNumber}
-                  onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())}
-                  style={{ textTransform: 'uppercase' }}
+                  placeholder="Username / Email"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
                 />
               </div>
-            )}
+              <div>
+                <input
+                  type="password"
+                  className="gov-input"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              {selectedRole === 'surveyor' && (
+                <div>
+                  <input
+                    type="text"
+                    className="gov-input"
+                    placeholder="Vehicle Number (e.g. AS-01-BX-4021)"
+                    value={vehicleNumber}
+                    onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())}
+                    style={{ textTransform: 'uppercase' }}
+                  />
+                </div>
+              )}
+            </div>
             <button
               type="submit"
-              className="gov-btn-primary"
-              style={{ width: '100%', marginTop: '4px', padding: '11px', fontSize: '14px' }}
+              style={{
+                width: '100%',
+                marginTop: '4px',
+                padding: '11px',
+                fontSize: '14px',
+                fontWeight: 600,
+                backgroundColor: '#111827',
+                color: '#ffffff',
+                border: '1px solid #111827',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
             >
               <span>Sign In as {selectedRole === 'surveyor' ? 'Surveyor' : 'Official'}</span>
               <ArrowRight size={15} />
             </button>
           </form>
-          <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid var(--gov-border)' }}>
+          <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid #e2e8f0' }}>
             <button
               type="button"
               onClick={() => setShowScanDemo(true)}
@@ -115,9 +131,9 @@ export default function LoginPage() {
                 width: '100%',
                 padding: '11px 14px',
                 borderRadius: 'var(--radius-sm)',
-                border: '1.5px solid #0284c7',
-                background: 'rgba(2, 132, 199, 0.05)',
-                color: '#0284c7',
+                border: '1.5px solid #111827',
+                background: '#ffffff',
+                color: '#111827',
                 fontWeight: 700,
                 fontSize: '13px',
                 cursor: 'pointer',
@@ -128,14 +144,11 @@ export default function LoginPage() {
                 transition: 'all 0.15s ease'
               }}
             >
-              <Activity size={16} />
+              <PlayCircle size={16} color="#111827" />
               <span>Check Our Scans</span>
-              <span style={{ fontSize: '10px', background: '#0284c7', color: '#ffffff', padding: '2px 8px', borderRadius: '10px', fontWeight: 800 }}>
-                Live AI Tests
-              </span>
             </button>
-            <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--gov-text-muted)', marginTop: '6px' }}>
-              Run Tri-Layer AI Vision models on real dashcam test footage
+            <div style={{ textAlign: 'center', fontSize: '11px', color: '#64748b', marginTop: '8px' }}>
+              Preview road defect detection on sample dashcam footage
             </div>
           </div>
         </div>
