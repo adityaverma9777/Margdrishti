@@ -38,7 +38,7 @@ export default function ScanDemoModal({ onClose }) {
   const lastSnapshotTimesRef = useRef({});
   const modelTogglesRef = useRef({ enableDefects: true, enableVehicles: true, enableRoad: true });
   modelTogglesRef.current = { enableDefects, enableVehicles, enableRoad };
-  const engineConnected = gpuServerOnline || localModelReady;
+  const engineConnected = localModelReady || gpuServerOnline;
   const formatTime = (sec) => {
     if (isNaN(sec)) return '0:00';
     const m = Math.floor(sec / 60);
@@ -89,33 +89,22 @@ export default function ScanDemoModal({ onClose }) {
   };
   useEffect(() => {
     let active = true;
-    const checkStatus = async () => {
-      const gpuHealth = await checkGpuServerHealth();
-      if (!active) return;
-      if (gpuHealth && gpuHealth.online) {
-        setGpuServerOnline(true);
-        setIsWakingUp(false);
-      } else {
-        setGpuServerOnline(false);
-        setIsWakingUp(Boolean(gpuHealth?.wakingUp));
-        if (!localModelReady) {
-          try {
-            const loaded = await loadLocalTriLayerModels();
-            if (active && loaded?.defectModel && loaded?.twinLiteSession && loaded?.vehicleSession) {
-              setLocalModelReady(true);
-            }
-          } catch {}
+    const init = async () => {
+      checkGpuServerHealth().then(gpuHealth => {
+        if (active) {
+          setGpuServerOnline(gpuHealth?.online || false);
+          setIsWakingUp(!gpuHealth?.online && Boolean(gpuHealth?.wakingUp));
         }
-      }
+      }).catch(() => {});
+      try {
+        const loaded = await loadLocalTriLayerModels();
+        if (active && loaded?.defectModel && loaded?.twinLiteSession && loaded?.vehicleSession) {
+          setLocalModelReady(true);
+        }
+      } catch {}
     };
-    checkStatus();
-    const interval = setInterval(() => {
-      if (!localModelReady) checkStatus();
-    }, 5000);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
+    init();
+    return () => { active = false; };
   }, []);
   useEffect(() => {
     const video = videoRef.current;
@@ -187,7 +176,21 @@ export default function ScanDemoModal({ onClose }) {
       const tStart = performance.now();
       const toggles = modelTogglesRef.current;
       try {
-        if (gpuServerOnline) {
+        if (localModelReady) {
+          const res = await predictLocalTriLayer(video, toggles);
+          if (res && !stoppedRef.current) {
+            lastTriLayerRef.current = res;
+            const hazs = res.hazards || [];
+            lastDetectionsRef.current = hazs;
+            setPciScore(res.estimated_pci);
+            setPciRating(res.pci_rating);
+            setVehiclesCount((res.vehicles || []).length);
+            setHazardsCount(hazs.length);
+            if (hazs.length > 0) {
+              handleDefectLogging(hazs, video);
+            }
+          }
+        } else if (gpuServerOnline) {
           const res = await predictTriLayerGpu(video, 0.15, toggles);
           if (res && !stoppedRef.current) {
             lastTriLayerRef.current = res;
@@ -198,20 +201,6 @@ export default function ScanDemoModal({ onClose }) {
               setPciRating(toggles.enableDefects ? (res.pci_rating || 'Good') : 'Good');
             }
             setVehiclesCount(toggles.enableVehicles ? (res.vehicles || []).length : 0);
-            setHazardsCount(hazs.length);
-            if (hazs.length > 0) {
-              handleDefectLogging(hazs, video);
-            }
-          }
-        } else if (localModelReady) {
-          const res = await predictLocalTriLayer(video, toggles);
-          if (res && !stoppedRef.current) {
-            lastTriLayerRef.current = res;
-            const hazs = res.hazards || [];
-            lastDetectionsRef.current = hazs;
-            setPciScore(res.estimated_pci);
-            setPciRating(res.pci_rating);
-            setVehiclesCount((res.vehicles || []).length);
             setHazardsCount(hazs.length);
             if (hazs.length > 0) {
               handleDefectLogging(hazs, video);
@@ -384,7 +373,7 @@ export default function ScanDemoModal({ onClose }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '15px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.2px' }}>Demo Detections on Footage</span>
               <span style={{ fontSize: '11px', background: engineConnected ? '#dcfce7' : '#fef3c7', color: engineConnected ? '#166534' : '#92400e', border: `1px solid ${engineConnected ? '#bbf7d0' : '#fde68a'}`, padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
-                {gpuServerOnline ? 'Connected' : localModelReady ? 'Local Scanner Ready' : isWakingUp ? 'Connecting...' : 'Connecting...'}
+                {localModelReady ? 'Local Scanner Ready' : gpuServerOnline ? 'Cloud Scanner' : isWakingUp ? 'Connecting...' : 'Loading Models...'}
               </span>
             </div>
           </div>
