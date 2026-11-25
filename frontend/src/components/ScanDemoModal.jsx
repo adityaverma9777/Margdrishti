@@ -316,27 +316,33 @@ export default function ScanDemoModal({ onClose }) {
     };
   }, [gpuServerOnline, engineConnected]);
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#0a0f1d', display: 'flex', flexDirection: 'column', color: '#ffffff', fontFamily: "'Inter', -apple-system, sans-serif" }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'var(--gov-bg, #f8fafc)', display: 'flex', flexDirection: 'column', color: 'var(--gov-text-primary, #0f172a)', fontFamily: "'Inter', -apple-system, sans-serif" }}>
       <style>{`
         .scan-demo-body { display: flex; flex: 1; min-height: 0; overflow: hidden; flex-direction: row; }
-        .scan-demo-video-pane { flex: 0 0 70%; min-width: 0; min-height: 0; position: relative; background: #000000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-        .scan-demo-feed-pane { flex: 0 0 30%; min-width: 0; min-height: 0; background: #0f172a; border-left: 1px solid #1e293b; display: flex; flex-direction: column; }
+        .scan-demo-video-pane { flex: 0 0 70%; min-width: 0; min-height: 0; position: relative; background: #09090b; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .scan-demo-feed-pane { flex: 0 0 30%; min-width: 0; min-height: 0; background: #f8fafc; border-left: 1px solid #e2e8f0; display: flex; flex-direction: column; }
         @media (max-width: 900px) {
           .scan-demo-body { flex-direction: column; }
           .scan-demo-video-pane { flex: 0 0 54%; width: 100%; }
-          .scan-demo-feed-pane { flex: 1 1 46%; width: 100%; border-left: none; border-top: 1px solid #1e293b; }
+          .scan-demo-feed-pane { flex: 1 1 46%; width: 100%; border-left: none; border-top: 1px solid #e2e8f0; }
         }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
-      <div style={{ padding: '10px 18px', background: '#0f172a', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+      <div style={{ padding: '12px 20px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <Activity size={18} color="#38bdf8" />
-          <span style={{ fontSize: '15px', fontWeight: 800, color: '#f8fafc' }}>StreetIQ Vision</span>
-          <span style={{ fontSize: '11px', background: engineConnected ? 'rgba(34, 197, 94, 0.2)' : 'rgba(234, 179, 8, 0.2)', color: engineConnected ? '#4ade80' : '#facc15', border: `1px solid ${engineConnected ? 'rgba(34, 197, 94, 0.4)' : 'rgba(234, 179, 8, 0.4)'}`, padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
-            {gpuServerOnline ? 'Cloud Tri-Layer Engine Online' : localModelReady ? 'Edge Vision Engine Ready' : isWakingUp ? 'Waking up Cloud Engine...' : 'Connecting to Vision Engine...'}
-          </span>
+          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#111827', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Activity size={17} color="#ffffff" />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '15px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.2px' }}>StreetIQ Vision</span>
+              <span style={{ fontSize: '11px', background: engineConnected ? '#dcfce7' : '#fef3c7', color: engineConnected ? '#166534' : '#92400e', border: `1px solid ${engineConnected ? '#bbf7d0' : '#fde68a'}`, padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
+                {gpuServerOnline ? 'Cloud Tri-Layer Engine Online' : localModelReady ? 'Edge Vision Engine Ready' : isWakingUp ? 'Waking up Cloud Engine...' : 'Connecting to Vision Engine...'}
+              </span>
+            </div>
+          </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#020617', padding: '4px', borderRadius: '8px', border: '1px solid #1e293b' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', padding: '4px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
           {DEMO_VIDEOS.map((v) => {
             const isSelected = selectedVideo.id === v.id;
             return (
@@ -346,10 +352,10 @@ export default function ScanDemoModal({ onClose }) {
                 style={{
                   padding: '6px 14px',
                   borderRadius: '6px',
-                  background: isSelected ? '#0284c7' : 'transparent',
+                  background: isSelected ? '#111827' : 'transparent',
                   border: 'none',
                   cursor: 'pointer',
-                  color: isSelected ? '#ffffff' : '#94a3b8',
+                  color: isSelected ? '#ffffff' : '#475569',
                   fontSize: '12px',
                   fontWeight: 700,
                   transition: 'all 0.15s ease'
@@ -362,7 +368,7 @@ export default function ScanDemoModal({ onClose }) {
         </div>
         <button
           onClick={onClose}
-          style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600 }}
+          style={{ background: '#ffffff', border: '1px solid #cbd5e1', color: '#0f172a', padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700 }}
         >
           <X size={15} />
           <span>Close</span>
@@ -391,48 +397,48 @@ export default function ScanDemoModal({ onClose }) {
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
           />
           {!engineConnected && (
-            <div style={{ position: 'absolute', inset: 0, background: 'rgba(2, 6, 23, 0.85)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '24px', textAlign: 'center', zIndex: 10 }}>
-              <Loader2 size={36} color="#38bdf8" style={{ animation: 'spin 1s linear infinite' }} />
-              <div style={{ fontSize: '16px', fontWeight: 800, color: '#f8fafc' }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(248, 250, 252, 0.92)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '24px', textAlign: 'center', zIndex: 10 }}>
+              <Loader2 size={34} color="#111827" style={{ animation: 'spin 1s linear infinite' }} />
+              <div style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a' }}>
                 {isWakingUp ? 'Waking up Cloud Vision Engine...' : 'Connecting to AI Vision Engine...'}
               </div>
-              <div style={{ fontSize: '13px', color: '#94a3b8', maxWidth: '380px' }}>
+              <div style={{ fontSize: '13px', color: '#475569', maxWidth: '380px' }}>
                 Waiting for Tri-Layer models to establish connection. Video playback and real-time scanning will start automatically once ready.
               </div>
             </div>
           )}
-          <div style={{ position: 'absolute', top: 14, left: 14, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(8px)', border: '1px solid #334155', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{ position: 'absolute', top: 14, left: 14, background: 'rgba(255, 255, 255, 0.94)', backdropFilter: 'blur(8px)', border: '1px solid #e2e8f0', padding: '7px 14px', borderRadius: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)', color: '#0f172a' }}>
             <div>
-              <span style={{ color: '#94a3b8' }}>PCI: </span>
-              <strong style={{ color: pciScore >= 80 ? '#4ade80' : pciScore >= 65 ? '#facc15' : '#fb923c' }}>{pciScore}/100 ({pciRating})</strong>
+              <span style={{ color: '#64748b', fontWeight: 600 }}>PCI: </span>
+              <strong style={{ color: pciScore >= 80 ? '#16a34a' : pciScore >= 65 ? '#ca8a04' : '#dc2626' }}>{pciScore}/100 ({pciRating})</strong>
             </div>
-            <div style={{ width: '1px', height: '12px', background: '#334155' }}></div>
+            <div style={{ width: '1px', height: '12px', background: '#cbd5e1' }}></div>
             <div>
-              <span style={{ color: '#94a3b8' }}>Hazards: </span>
-              <strong style={{ color: '#ffffff' }}>{hazardsCount}</strong>
+              <span style={{ color: '#64748b', fontWeight: 600 }}>Hazards: </span>
+              <strong style={{ color: '#0f172a' }}>{hazardsCount}</strong>
             </div>
-            <div style={{ width: '1px', height: '12px', background: '#334155' }}></div>
+            <div style={{ width: '1px', height: '12px', background: '#cbd5e1' }}></div>
             <div>
-              <span style={{ color: '#94a3b8' }}>Vehicles: </span>
-              <strong style={{ color: '#ffffff' }}>{vehiclesCount}</strong>
+              <span style={{ color: '#64748b', fontWeight: 600 }}>Vehicles: </span>
+              <strong style={{ color: '#0f172a' }}>{vehiclesCount}</strong>
             </div>
           </div>
-          <div style={{ position: 'absolute', bottom: 14, left: 14, right: 14, background: 'rgba(15, 23, 42, 0.88)', backdropFilter: 'blur(8px)', border: '1px solid #334155', borderRadius: '8px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '12px', opacity: engineConnected ? 1 : 0.5 }}>
+          <div style={{ position: 'absolute', bottom: 14, left: 14, right: 14, background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(8px)', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.14)', opacity: engineConnected ? 1 : 0.5 }}>
             <button
               onClick={togglePlay}
               disabled={!engineConnected}
-              style={{ width: '32px', height: '32px', borderRadius: '6px', background: '#0284c7', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: engineConnected ? 'pointer' : 'not-allowed' }}
+              style={{ width: '34px', height: '34px', borderRadius: '6px', background: '#111827', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: engineConnected ? 'pointer' : 'not-allowed' }}
             >
               {isPlaying ? <Pause size={15} /> : <Play size={15} />}
             </button>
             <button
               onClick={handleRestart}
               disabled={!engineConnected}
-              style={{ width: '32px', height: '32px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: engineConnected ? 'pointer' : 'not-allowed' }}
+              style={{ width: '34px', height: '34px', borderRadius: '6px', background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: engineConnected ? 'pointer' : 'not-allowed' }}
             >
               <RotateCcw size={14} />
             </button>
-            <div style={{ fontSize: '11px', color: '#94a3b8', minWidth: '70px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: '#475569', minWidth: '76px', fontVariantNumeric: 'tabular-nums' }}>
               <span>{formatTime(currentTime)}</span> / <span>{formatTime(duration)}</span>
             </div>
             <input
@@ -443,58 +449,58 @@ export default function ScanDemoModal({ onClose }) {
               value={currentTime}
               onChange={handleSeek}
               disabled={!engineConnected}
-              style={{ flex: 1, cursor: engineConnected ? 'pointer' : 'not-allowed', accentColor: '#38bdf8' }}
+              style={{ flex: 1, cursor: engineConnected ? 'pointer' : 'not-allowed', accentColor: '#111827' }}
             />
           </div>
         </div>
         <div className="scan-demo-feed-pane">
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0b1221' }}>
+          <div style={{ padding: '14px 16px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#ffffff' }}>
             <div>
-              <div style={{ fontSize: '13px', fontWeight: 800, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Camera size={15} color="#38bdf8" />
+              <div style={{ fontSize: '13px', fontWeight: 800, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Camera size={15} color="#111827" />
                 <span>Live Detections</span>
               </div>
-              <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
                 Temporary live session snapshots
               </div>
             </div>
-            <span style={{ fontSize: '12px', fontWeight: 800, background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.35)', padding: '2px 10px', borderRadius: '12px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 800, background: '#111827', color: '#ffffff', padding: '2px 10px', borderRadius: '12px' }}>
               {detectedFeed.length}
             </span>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {detectedFeed.length === 0 ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '28px 16px', color: '#64748b' }}>
-                <Camera size={28} color="#334155" style={{ marginBottom: '10px' }} />
-                <div style={{ fontSize: '13px', fontWeight: 700, color: '#94a3b8' }}>
+                <Camera size={28} color="#cbd5e1" style={{ marginBottom: '10px' }} />
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
                   {engineConnected ? 'Scanning Roadway...' : 'Waiting for Connection...'}
                 </div>
-                <div style={{ fontSize: '11px', marginTop: '4px', maxWidth: '220px', lineHeight: '1.45' }}>
+                <div style={{ fontSize: '11px', marginTop: '4px', maxWidth: '220px', lineHeight: '1.45', color: '#64748b' }}>
                   Detected potholes and surface cracks will appear here with captured frames as the footage plays.
                 </div>
               </div>
             ) : (
               detectedFeed.map((item) => (
-                <div key={item.id} style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
-                  <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#020617' }}>
+                <div key={item.id} style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', flexShrink: 0, boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)' }}>
+                  <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#09090b' }}>
                     <img
                       src={item.imageSrc}
                       alt={item.label}
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     />
-                    <span style={{ position: 'absolute', top: '6px', left: '6px', fontSize: '10px', fontWeight: 800, padding: '2px 7px', borderRadius: '4px', background: item.isPothole ? '#ef4444' : '#f59e0b', color: '#ffffff' }}>
+                    <span style={{ position: 'absolute', top: '8px', left: '8px', fontSize: '10px', fontWeight: 800, padding: '2px 7px', borderRadius: '4px', background: item.isPothole ? '#dc2626' : '#d97706', color: '#ffffff' }}>
                       Sev {item.severity}/5
                     </span>
-                    <span style={{ position: 'absolute', top: '6px', right: '6px', fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '4px', background: 'rgba(15, 23, 42, 0.85)', color: '#e2e8f0' }}>
+                    <span style={{ position: 'absolute', top: '8px', right: '8px', fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '4px', background: 'rgba(17, 24, 39, 0.85)', color: '#ffffff' }}>
                       {item.videoTime}
                     </span>
                   </div>
-                  <div style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                     <div>
-                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#f8fafc' }}>{item.label}</div>
-                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>{item.confidence}% confidence</div>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a' }}>{item.label}</div>
+                      <div style={{ fontSize: '11px', color: '#64748b' }}>{item.confidence}% confidence</div>
                     </div>
-                    <span style={{ fontSize: '10px', fontWeight: 700, color: '#94a3b8', background: 'rgba(148, 163, 184, 0.12)', padding: '2px 7px', borderRadius: '4px' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 700, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: '4px' }}>
                       Session
                     </span>
                   </div>
