@@ -17,3 +17,4 @@ backend/weights/*.safetensors
 backend/weights/.cache/
 backend/yolo_config/
 already implemented.md
+frontend/public/models/yolo11l_pci.onnx
